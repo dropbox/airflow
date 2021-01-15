@@ -33,7 +33,7 @@ from airflow.utils.operator_helpers import context_to_airflow_vars
 
 
 class BashOperator(BaseOperator):
-    """
+    r"""
     Execute a Bash script, command or set of commands.
 
     .. seealso::
@@ -53,6 +53,37 @@ class BashOperator(BaseOperator):
     :type env: dict
     :param output_encoding: Output encoding of bash command
     :type output_encoding: str
+
+    .. warning::
+
+        Care should be taken with "user" input or when using Jinja templates in the
+        ``bash_command``, as this bash operator does not perform any escaping or
+        sanitization of the command.
+
+        This applies mostly to using "dag_run" conf, as that can be submitted via
+        users in the Web UI. Most of the default template variables are not at
+        risk.
+
+    For example, do **not** do this:
+
+    .. code-block:: python
+
+        bash_task = BashOperator(
+            task_id="bash_task",
+            bash_command='echo "Here is the message: \'{{ dag_run.conf["message"] if dag_run else "" }}\'"',
+        )
+
+    Instead, you should pass this via the ``env`` kwarg and use double-quotes
+    inside the bash_command, as below:
+
+    .. code-block:: python
+
+        bash_task = BashOperator(
+            task_id="bash_task",
+            bash_command='echo "here is the message: \'$message\'"',
+            env={'message': '{{ dag_run.conf["message"] if dag_run else "" }}'},
+        )
+
     """
     template_fields = ('bash_command', 'env')
     template_ext = ('.sh', '.bash',)
@@ -72,6 +103,7 @@ class BashOperator(BaseOperator):
         self.env = env
         self.xcom_push_flag = xcom_push
         self.output_encoding = output_encoding
+        self.sub_process = None
 
     def execute(self, context):
         """
@@ -85,10 +117,9 @@ class BashOperator(BaseOperator):
         if env is None:
             env = os.environ.copy()
         airflow_context_vars = context_to_airflow_vars(context, in_env_var_format=True)
-        self.log.info('Exporting the following env vars:\n%s',
-                      '\n'.join(["{}={}".format(k, v)
-                                 for k, v in
-                                 airflow_context_vars.items()]))
+        self.log.debug('Exporting the following env vars:\n%s',
+                       '\n'.join(["{}={}".format(k, v)
+                                  for k, v in airflow_context_vars.items()]))
         env.update(airflow_context_vars)
 
         self.lineage_data = self.bash_command
@@ -113,26 +144,24 @@ class BashOperator(BaseOperator):
                     os.setsid()
 
                 self.log.info("Running command: %s", self.bash_command)
-                sp = Popen(
+                self.sub_process = Popen(
                     ['bash', fname],
                     stdout=PIPE, stderr=STDOUT,
                     cwd=tmp_dir, env=env,
                     preexec_fn=pre_exec)
 
-                self.sp = sp
-
                 self.log.info("Output:")
                 line = ''
-                for line in iter(sp.stdout.readline, b''):
+                for line in iter(self.sub_process.stdout.readline, b''):
                     line = line.decode(self.output_encoding).rstrip()
                     self.log.info(line)
-                sp.wait()
+                self.sub_process.wait()
                 self.log.info(
                     "Command exited with return code %s",
-                    sp.returncode
+                    self.sub_process.returncode
                 )
 
-                if sp.returncode:
+                if self.sub_process.returncode:
                     raise AirflowException("Bash command failed")
 
         if self.xcom_push_flag:
@@ -140,4 +169,5 @@ class BashOperator(BaseOperator):
 
     def on_kill(self):
         self.log.info('Sending SIGTERM signal to bash process group')
-        os.killpg(os.getpgid(self.sp.pid), signal.SIGTERM)
+        if self.sub_process and hasattr(self.sub_process, 'pid'):
+            os.killpg(os.getpgid(self.sub_process.pid), signal.SIGTERM)

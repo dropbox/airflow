@@ -22,17 +22,25 @@ from __future__ import print_function, unicode_literals
 import copy
 import logging
 import os
+
 import unittest
+
+from tests.compat import mock
+
 from collections import namedtuple
 from datetime import timedelta, date
 
 from airflow.exceptions import AirflowException
 from airflow.models import TaskInstance as TI, DAG, DagRun
+from airflow.models.taskinstance import clear_task_instances
 from airflow.operators.dummy_operator import DummyOperator
 from airflow.operators.python_operator import PythonOperator, BranchPythonOperator
+from airflow.operators.python_operator import PythonVirtualenvOperator
 from airflow.operators.python_operator import ShortCircuitOperator
 from airflow.settings import Session
 from airflow.utils import timezone
+from tests.test_utils.db import clear_db_runs, clear_db_dags
+from airflow.utils.db import create_session
 from airflow.utils.state import State
 
 DEFAULT_DATE = timezone.datetime(2016, 1, 1)
@@ -64,10 +72,62 @@ def build_recording_function(calls_collection):
     return recording_function
 
 
-class PythonOperatorTest(unittest.TestCase):
+class TestPythonBase(unittest.TestCase):
+    """Base test class for TestPythonOperator and TestPythonSensor classes"""
     @classmethod
     def setUpClass(cls):
-        super(PythonOperatorTest, cls).setUpClass()
+        super(TestPythonBase, cls).setUpClass()
+
+        with create_session() as session:
+            session.query(DagRun).delete()
+            session.query(TI).delete()
+
+    def setUp(self):
+        super(TestPythonBase, self).setUp()
+        self.dag = DAG(
+            'test_dag',
+            default_args={
+                'owner': 'airflow',
+                'start_date': DEFAULT_DATE})
+        self.addCleanup(self.dag.clear)
+        self.clear_run()
+        self.addCleanup(self.clear_run)
+
+    def tearDown(self):
+        super(TestPythonBase, self).tearDown()
+
+        with create_session() as session:
+            session.query(DagRun).delete()
+            session.query(TI).delete()
+
+    def clear_run(self):
+        self.run = False
+
+    def _assert_calls_equal(self, first, second):
+        self.assertIsInstance(first, Call)
+        self.assertIsInstance(second, Call)
+        self.assertTupleEqual(first.args, second.args)
+        # eliminate context (conf, dag_run, task_instance, etc.)
+        test_args = ["an_int", "a_date", "a_templated_string"]
+        first.kwargs = {
+            key: value
+            for (key, value) in first.kwargs.items()
+            if key in test_args
+        }
+        second.kwargs = {
+            key: value
+            for (key, value) in second.kwargs.items()
+            if key in test_args
+        }
+        self.assertDictEqual(first.kwargs, second.kwargs)
+
+
+@mock.patch.dict('os.environ', {})
+class TestPythonOperator(TestPythonBase):
+
+    @classmethod
+    def setUpClass(cls):
+        super(TestPythonOperator, cls).setUpClass()
 
         session = Session()
 
@@ -77,19 +137,29 @@ class PythonOperatorTest(unittest.TestCase):
         session.close()
 
     def setUp(self):
-        super(PythonOperatorTest, self).setUp()
+        super(TestPythonOperator, self).setUp()
+
+        def del_env(key):
+            try:
+                del os.environ[key]
+            except KeyError:
+                pass
+
+        del_env('AIRFLOW_CTX_DAG_ID')
+        del_env('AIRFLOW_CTX_TASK_ID')
+        del_env('AIRFLOW_CTX_EXECUTION_DATE')
+        del_env('AIRFLOW_CTX_DAG_RUN_ID')
         self.dag = DAG(
             'test_dag',
             default_args={
                 'owner': 'airflow',
-                'start_date': DEFAULT_DATE},
-            schedule_interval=INTERVAL)
+                'start_date': DEFAULT_DATE})
         self.addCleanup(self.dag.clear)
         self.clear_run()
         self.addCleanup(self.clear_run)
 
     def tearDown(self):
-        super(PythonOperatorTest, self).tearDown()
+        super(TestPythonOperator, self).tearDown()
 
         session = Session()
 
@@ -103,11 +173,29 @@ class PythonOperatorTest(unittest.TestCase):
             if var in os.environ:
                 del os.environ[var]
 
-    def do_run(self):
-        self.run = True
-
     def clear_run(self):
         self.run = False
+
+    def _assert_calls_equal(self, first, second):
+        self.assertIsInstance(first, Call)
+        self.assertIsInstance(second, Call)
+        self.assertTupleEqual(first.args, second.args)
+        # eliminate context (conf, dag_run, task_instance, etc.)
+        test_args = ["an_int", "a_date", "a_templated_string"]
+        first.kwargs = {
+            key: value
+            for (key, value) in first.kwargs.items()
+            if key in test_args
+        }
+        second.kwargs = {
+            key: value
+            for (key, value) in second.kwargs.items()
+            if key in test_args
+        }
+        self.assertDictEqual(first.kwargs, second.kwargs)
+
+    def do_run(self):
+        self.run = True
 
     def is_run(self):
         return self.run
@@ -137,12 +225,6 @@ class PythonOperatorTest(unittest.TestCase):
                 python_callable=not_callable,
                 task_id='python_operator',
                 dag=self.dag)
-
-    def _assertCallsEqual(self, first, second):
-        self.assertIsInstance(first, Call)
-        self.assertIsInstance(second, Call)
-        self.assertTupleEqual(first.args, second.args)
-        self.assertDictEqual(first.kwargs, second.kwargs)
 
     def test_python_callable_arguments_are_templatized(self):
         """Test PythonOperator op_args are templatized"""
@@ -176,7 +258,7 @@ class PythonOperatorTest(unittest.TestCase):
 
         ds_templated = DEFAULT_DATE.date().isoformat()
         self.assertEqual(1, len(recorded_calls))
-        self._assertCallsEqual(
+        self._assert_calls_equal(
             recorded_calls[0],
             Call(4,
                  date(2019, 1, 1),
@@ -209,7 +291,7 @@ class PythonOperatorTest(unittest.TestCase):
         task.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
 
         self.assertEqual(1, len(recorded_calls))
-        self._assertCallsEqual(
+        self._assert_calls_equal(
             recorded_calls[0],
             Call(an_int=4,
                  a_date=date(2019, 1, 1),
@@ -258,6 +340,75 @@ class PythonOperatorTest(unittest.TestCase):
                            dag=self.dag,
                            python_callable=self._env_var_check_callback
                            )
+        t.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+
+
+class TestPythonVirtualenvOperator(TestPythonBase):
+    @classmethod
+    def setUpClass(cls):
+        super(TestPythonVirtualenvOperator, cls).setUpClass()
+        clear_db_runs()
+
+    def setUp(self):
+        super(TestPythonVirtualenvOperator, self).setUp()
+
+        def del_env(key):
+            try:
+                del os.environ[key]
+            except KeyError:
+                pass
+
+        del_env('AIRFLOW_CTX_DAG_ID')
+        del_env('AIRFLOW_CTX_TASK_ID')
+        del_env('AIRFLOW_CTX_EXECUTION_DATE')
+        del_env('AIRFLOW_CTX_DAG_RUN_ID')
+        self.dag = DAG(
+            'test_dag',
+            default_args={
+                'owner': 'airflow',
+                'start_date': DEFAULT_DATE})
+        self.addCleanup(self.dag.clear)
+        self.clear_run()
+        self.addCleanup(self.clear_run)
+
+    def tearDown(self):
+        super(TestPythonVirtualenvOperator, self).tearDown()
+        clear_db_runs()
+        clear_db_dags()
+
+        for var in TI_CONTEXT_ENV_VARS:
+            if var in os.environ:
+                del os.environ[var]
+
+    def clear_run(self):
+        self.run = False
+
+    def do_run(self):
+        self.run = True
+
+    def is_run(self):
+        return self.run
+
+    def test_config_context(self):
+        """
+        This test ensures we can use dag_run from the context
+        to access the configuration at run time that's being
+        passed from the UI, CLI, and REST API.
+        """
+        self.dag.create_dagrun(
+            run_id='manual__' + DEFAULT_DATE.isoformat(),
+            execution_date=DEFAULT_DATE,
+            start_date=DEFAULT_DATE,
+            state=State.RUNNING,
+            external_trigger=False,
+        )
+
+        def pass_function(**kwargs):
+            kwargs['dag_run'].conf
+
+        t = PythonVirtualenvOperator(task_id='config_dag_run', dag=self.dag,
+                                     provide_context=True,
+                                     python_callable=pass_function)
         t.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
 
 
@@ -412,7 +563,7 @@ class BranchOperatorTest(unittest.TestCase):
             elif ti.task_id == 'branch_2':
                 self.assertEqual(ti.state, State.NONE)
             else:
-                raise Exception
+                raise
 
     def test_with_skip_in_branch_downstream_dependencies2(self):
         self.branch_op = BranchPythonOperator(task_id='make_choice',
@@ -441,7 +592,63 @@ class BranchOperatorTest(unittest.TestCase):
             elif ti.task_id == 'branch_2':
                 self.assertEqual(ti.state, State.NONE)
             else:
-                raise Exception
+                raise
+
+    def test_clear_skipped_downstream_task(self):
+        """
+        After a downstream task is skipped by BranchPythonOperator, clearing the skipped task
+        should not cause it to be executed.
+        """
+        branch_op = BranchPythonOperator(task_id='make_choice',
+                                         dag=self.dag,
+                                         python_callable=lambda: 'branch_1')
+        branches = [self.branch_1, self.branch_2]
+        branch_op >> branches
+        self.dag.clear()
+
+        dr = self.dag.create_dagrun(
+            run_id="manual__",
+            start_date=timezone.utcnow(),
+            execution_date=DEFAULT_DATE,
+            state=State.RUNNING
+        )
+
+        branch_op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+
+        for task in branches:
+            task.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+
+        tis = dr.get_task_instances()
+        for ti in tis:
+            if ti.task_id == 'make_choice':
+                self.assertEqual(ti.state, State.SUCCESS)
+            elif ti.task_id == 'branch_1':
+                self.assertEqual(ti.state, State.SUCCESS)
+            elif ti.task_id == 'branch_2':
+                self.assertEqual(ti.state, State.SKIPPED)
+            else:
+                raise
+
+        children_tis = [ti for ti in tis if ti.task_id in branch_op.get_direct_relative_ids()]
+
+        # Clear the children tasks.
+        with create_session() as session:
+            clear_task_instances(children_tis, session=session, dag=self.dag)
+
+        # Run the cleared tasks again.
+        for task in branches:
+            task.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+
+        # Check if the states are correct after children tasks are cleared.
+        for ti in dr.get_task_instances():
+            if ti.task_id == 'make_choice':
+                self.assertEqual(ti.state, State.SUCCESS)
+            elif ti.task_id == 'branch_1':
+                self.assertEqual(ti.state, State.SUCCESS)
+            elif ti.task_id == 'branch_2':
+                self.assertEqual(ti.state, State.SKIPPED)
+            else:
+                raise
 
 
 class ShortCircuitOperatorTest(unittest.TestCase):
@@ -579,5 +786,63 @@ class ShortCircuitOperatorTest(unittest.TestCase):
                 self.assertEqual(ti.state, State.SUCCESS)
             elif ti.task_id == 'branch_1' or ti.task_id == 'branch_2':
                 self.assertEqual(ti.state, State.NONE)
+            else:
+                raise
+
+    def test_clear_skipped_downstream_task(self):
+        """
+        After a downstream task is skipped by ShortCircuitOperator, clearing the skipped task
+        should not cause it to be executed.
+        """
+        dag = DAG('shortcircuit_clear_skipped_downstream_task',
+                  default_args={
+                      'owner': 'airflow',
+                      'start_date': DEFAULT_DATE
+                  },
+                  schedule_interval=INTERVAL)
+        short_op = ShortCircuitOperator(task_id='make_choice',
+                                        dag=dag,
+                                        python_callable=lambda: False)
+        downstream = DummyOperator(task_id='downstream', dag=dag)
+
+        short_op >> downstream
+
+        dag.clear()
+
+        dr = dag.create_dagrun(
+            run_id="manual__",
+            start_date=timezone.utcnow(),
+            execution_date=DEFAULT_DATE,
+            state=State.RUNNING
+        )
+
+        short_op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+        downstream.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+
+        tis = dr.get_task_instances()
+
+        for ti in tis:
+            if ti.task_id == 'make_choice':
+                self.assertEqual(ti.state, State.SUCCESS)
+            elif ti.task_id == 'downstream':
+                self.assertEqual(ti.state, State.SKIPPED)
+            else:
+                raise
+
+        # Clear downstream
+        with create_session() as session:
+            clear_task_instances([t for t in tis if t.task_id == "downstream"],
+                                 session=session,
+                                 dag=dag)
+
+        # Run downstream again
+        downstream.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+
+        # Check if the states are correct.
+        for ti in dr.get_task_instances():
+            if ti.task_id == 'make_choice':
+                self.assertEqual(ti.state, State.SUCCESS)
+            elif ti.task_id == 'downstream':
+                self.assertEqual(ti.state, State.SKIPPED)
             else:
                 raise

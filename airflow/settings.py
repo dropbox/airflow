@@ -35,8 +35,8 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from airflow.configuration import conf, AIRFLOW_HOME, WEBSERVER_CONFIG  # NOQA F401
-from airflow.contrib.kubernetes.pod import Pod
 from airflow.logging_config import configure_logging
+from airflow.utils.module_loading import import_string
 from airflow.utils.sqlalchemy import setup_event_handlers
 
 log = logging.getLogger(__name__)
@@ -154,37 +154,57 @@ Session = None
 # The JSON library to use for DAG Serialization and De-Serialization
 json = json
 
+# Dictionary containing State and colors associated to each state to
+# display on the Webserver
+STATE_COLORS = {
+    "queued": "gray",
+    "running": "lime",
+    "success": "green",
+    "failed": "red",
+    "up_for_retry": "gold",
+    "up_for_reschedule": "turquoise",
+    "upstream_failed": "orange",
+    "skipped": "pink",
+    "scheduled": "tan",
+}
 
-def policy(task_instance):
+
+def policy(task):
     """
-    This policy setting allows altering task instances right before they
-    are executed. It allows administrator to rewire some task parameters.
-
-    Note that the ``TaskInstance`` object has an attribute ``task`` pointing
-    to its related task object, that in turns has a reference to the DAG
-    object. So you can use the attributes of all of these to define your
-    policy.
+    This policy setting allows altering tasks after they are loaded in
+    the DagBag. It allows administrator to rewire some task parameters.
 
     To define policy, add a ``airflow_local_settings`` module
-    to your PYTHONPATH that defines this ``policy`` function. It receives
-    a ``TaskInstance`` object and can alter it where needed.
+    to your PYTHONPATH that defines this ``policy`` function.
 
     Here are a few examples of how this can be useful:
 
     * You could enforce a specific queue (say the ``spark`` queue)
         for tasks using the ``SparkOperator`` to make sure that these
-        task instances get wired to the right workers
-    * You could force all task instances running on an
-        ``execution_date`` older than a week old to run in a ``backfill``
-        pool.
+        tasks get wired to the right workers
+    * You could enforce a task timeout policy, making sure that no tasks run
+        for more than 48 hours
     * ...
     """
 
 
-def pod_mutation_hook(pod):  # type: (Pod) -> None
+def task_instance_mutation_hook(task_instance):
     """
-    This setting allows altering ``Pod`` objects before they are passed to
-    the Kubernetes client by the ``PodLauncher`` for scheduling.
+    This setting allows altering task instances before they are queued by
+    the Airflow scheduler.
+
+    To define task_instance_mutation_hook, add a ``airflow_local_settings`` module
+    to your PYTHONPATH that defines this ``task_instance_mutation_hook`` function.
+
+    This could be used, for instance, to modify the task instance during retries.
+    """
+
+
+def pod_mutation_hook(pod):
+    """
+    This setting allows altering ``kubernetes.client.models.V1Pod`` object
+    before they are passed to the Kubernetes client by the ``PodLauncher``
+    for scheduling.
 
     To define a pod mutation hook, add a ``airflow_local_settings`` module
     to your PYTHONPATH that defines this ``pod_mutation_hook`` function.
@@ -250,8 +270,8 @@ def configure_orm(disable_connection_pool=False):
         # https://docs.sqlalchemy.org/en/13/core/pooling.html#disconnect-handling-pessimistic
         pool_pre_ping = conf.getboolean('core', 'SQL_ALCHEMY_POOL_PRE_PING', fallback=True)
 
-        log.info("settings.configure_orm(): Using pool settings. pool_size={}, max_overflow={}, "
-                 "pool_recycle={}, pid={}".format(pool_size, max_overflow, pool_recycle, os.getpid()))
+        log.debug("settings.configure_orm(): Using pool settings. pool_size=%d, max_overflow=%d, "
+                  "pool_recycle=%d, pid=%d", pool_size, max_overflow, pool_recycle, os.getpid())
         engine_args['pool_size'] = pool_size
         engine_args['pool_recycle'] = pool_recycle
         engine_args['pool_pre_ping'] = pool_pre_ping
@@ -264,7 +284,14 @@ def configure_orm(disable_connection_pool=False):
     # For Python2 we get back a newstr and need a str
     engine_args['encoding'] = engine_args['encoding'].__str__()
 
-    engine = create_engine(SQL_ALCHEMY_CONN, **engine_args)
+    if conf.has_option('core', 'sql_alchemy_connect_args'):
+        connect_args = import_string(
+            conf.get('core', 'sql_alchemy_connect_args')
+        )
+    else:
+        connect_args = {}
+
+    engine = create_engine(SQL_ALCHEMY_CONN, connect_args=connect_args, **engine_args)
     setup_event_handlers(engine)
 
     Session = scoped_session(
@@ -400,3 +427,20 @@ STORE_SERIALIZED_DAGS = conf.getboolean('core', 'store_serialized_dags', fallbac
 # write rate.
 MIN_SERIALIZED_DAG_UPDATE_INTERVAL = conf.getint(
     'core', 'min_serialized_dag_update_interval', fallback=30)
+
+# Fetching serialized DAG can not be faster than a minimum interval to reduce database
+# read rate. This config controls when your DAGs are updated in the Webserver
+MIN_SERIALIZED_DAG_FETCH_INTERVAL = conf.getint(
+    'core', 'min_serialized_dag_fetch_interval', fallback=10)
+
+# Whether to persist DAG files code in DB. If set to True, Webserver reads file contents
+# from DB instead of trying to access files in a DAG folder.
+# Defaults to same as the store_serialized_dags setting.
+STORE_DAG_CODE = conf.getboolean("core", "store_dag_code", fallback=STORE_SERIALIZED_DAGS)
+
+# If donot_modify_handlers=True, we do not modify logging handlers in task_run command
+# If the flag is set to False, we remove all handlers from the root logger
+# and add all handlers from 'airflow.task' logger to the root Logger. This is done
+# to get all the logs from the print & log statements in the DAG files before a task is run
+# The handlers are restored after the task completes execution.
+DONOT_MODIFY_HANDLERS = conf.getboolean('logging', 'donot_modify_handlers', fallback=False)

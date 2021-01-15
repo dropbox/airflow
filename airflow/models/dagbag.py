@@ -28,7 +28,7 @@ import sys
 import textwrap
 import zipfile
 from collections import namedtuple
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from croniter import CroniterBadCronError, CroniterBadDateError, CroniterNotAlphaError, croniter
 import six
@@ -36,7 +36,7 @@ import six
 from airflow import settings
 from airflow.configuration import conf
 from airflow.dag.base_dag import BaseDagBag
-from airflow.exceptions import AirflowDagCycleException
+from airflow.exceptions import AirflowClusterPolicyViolation, AirflowDagCycleException
 from airflow.executors import get_default_executor
 from airflow.settings import Stats
 from airflow.utils import timezone
@@ -102,6 +102,7 @@ class DagBag(BaseDagBag, LoggingMixin):
         self.import_errors = {}
         self.has_logged = False
         self.store_serialized_dags = store_serialized_dags
+        self.dags_last_fetched = {}
 
         self.collect_dags(
             dag_folder=dag_folder,
@@ -118,36 +119,35 @@ class DagBag(BaseDagBag, LoggingMixin):
     def dag_ids(self):
         return self.dags.keys()
 
-    def get_dag(self, dag_id, from_file_only=False):
+    def get_dag(self, dag_id):
         """
         Gets the DAG out of the dictionary, and refreshes it if expired
 
         :param dag_id: DAG Id
         :type dag_id: str
-        :param from_file_only: returns a DAG loaded from file.
-        :type from_file_only: bool
         """
         from airflow.models.dag import DagModel  # Avoid circular import
 
-        # Only read DAGs from DB if this dagbag is store_serialized_dags.
-        # from_file_only is an exception, currently it is for renderring templates
-        # in UI only. Because functions are gone in serialized DAGs, DAGs must be
-        # imported from files.
-        # FIXME: this exception should be removed in future, then webserver can be
-        # decoupled from DAG files.
-        if self.store_serialized_dags and not from_file_only:
+        if self.store_serialized_dags:
             # Import here so that serialized dag is only imported when serialization is enabled
             from airflow.models.serialized_dag import SerializedDagModel
             if dag_id not in self.dags:
                 # Load from DB if not (yet) in the bag
-                row = SerializedDagModel.get(dag_id)
-                if not row:
-                    return None
+                self._add_dag_from_db(dag_id=dag_id)
+                return self.dags.get(dag_id)
 
-                dag = row.dag
-                for subdag in dag.subdags:
-                    self.dags[subdag.dag_id] = subdag
-                self.dags[dag.dag_id] = dag
+            # If DAG is in the DagBag, check the following
+            # 1. if time has come to check if DAG is updated (controlled by min_serialized_dag_fetch_secs)
+            # 2. check the last_updated column in SerializedDag table to see if Serialized DAG is updated
+            # 3. if (2) is yes, fetch the Serialized DAG.
+            min_serialized_dag_fetch_secs = timedelta(seconds=settings.MIN_SERIALIZED_DAG_FETCH_INTERVAL)
+            if (
+                dag_id in self.dags_last_fetched and
+                timezone.utcnow() > self.dags_last_fetched[dag_id] + min_serialized_dag_fetch_secs
+            ):
+                sd_last_updated_datetime = SerializedDagModel.get_last_updated_datetime(dag_id=dag_id)
+                if sd_last_updated_datetime > self.dags_last_fetched[dag_id]:
+                    self._add_dag_from_db(dag_id=dag_id)
 
             return self.dags.get(dag_id)
 
@@ -162,7 +162,7 @@ class DagBag(BaseDagBag, LoggingMixin):
         # Needs to load from file for a store_serialized_dags dagbag.
         enforce_from_file = False
         if self.store_serialized_dags and dag is not None:
-            from airflow.serialization import SerializedDAG
+            from airflow.serialization.serialized_objects import SerializedDAG
             enforce_from_file = isinstance(dag, SerializedDAG)
 
         # If the dag corresponding to root_dag_id is absent or expired
@@ -184,6 +184,19 @@ class DagBag(BaseDagBag, LoggingMixin):
             elif dag_id in self.dags:
                 del self.dags[dag_id]
         return self.dags.get(dag_id)
+
+    def _add_dag_from_db(self, dag_id):
+        """Add DAG to DagBag from DB"""
+        from airflow.models.serialized_dag import SerializedDagModel
+        row = SerializedDagModel.get(dag_id)
+        if not row:
+            raise ValueError("DAG '{}' not found in serialized_dag table".format(dag_id))
+
+        dag = row.dag
+        for subdag in dag.subdags:
+            self.dags[subdag.dag_id] = subdag
+        self.dags[dag.dag_id] = dag
+        self.dags_last_fetched[dag.dag_id] = timezone.utcnow()
 
     def process_file(self, filepath, only_if_updated=True, safe_mode=True):
         """
@@ -292,8 +305,8 @@ class DagBag(BaseDagBag, LoggingMixin):
                     try:
                         dag.is_subdag = False
                         self.bag_dag(dag, parent_dag=dag, root_dag=dag)
-                        if isinstance(dag._schedule_interval, six.string_types):
-                            croniter(dag._schedule_interval)
+                        if isinstance(dag.normalized_schedule_interval, six.string_types):
+                            croniter(dag.normalized_schedule_interval)
                         found_dags.append(dag)
                         found_dags += dag.subdags
                     except (CroniterBadCronError,
@@ -304,9 +317,10 @@ class DagBag(BaseDagBag, LoggingMixin):
                             "Invalid Cron expression: " + str(cron_e)
                         self.file_last_changed[dag.full_filepath] = \
                             file_last_changed_on_disk
-                    except AirflowDagCycleException as cycle_exception:
+                    except (AirflowDagCycleException,
+                            AirflowClusterPolicyViolation) as exception:
                         self.log.exception("Failed to bag_dag: %s", dag.full_filepath)
-                        self.import_errors[dag.full_filepath] = str(cycle_exception)
+                        self.import_errors[dag.full_filepath] = str(exception)
                         self.file_last_changed[dag.full_filepath] = \
                             file_last_changed_on_disk
 

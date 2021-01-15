@@ -26,12 +26,17 @@ import functools
 import getpass
 import json
 import socket
+import struct
 import sys
 from argparse import Namespace
 from datetime import datetime
+from fcntl import ioctl
+from os import environ
+from termios import TIOCGWINSZ
 
 from airflow.models import Log
 from airflow.utils import cli_action_loggers
+from airflow.utils.platform import is_terminal_support_colors
 
 
 def action_logging(f):
@@ -116,3 +121,42 @@ def _build_metrics(func_name, namespace):
         execution_date=metrics.get('execution_date'))
     metrics['log'] = log
     return metrics
+
+
+class ColorMode:
+    """
+    Coloring modes. If `auto` is then automatically detected.
+    """
+    ON = "on"
+    OFF = "off"
+    AUTO = "auto"
+
+
+def should_use_colors(args):
+    """
+    Processes arguments and decides whether to enable color in output
+    """
+    if args.color == ColorMode.ON:
+        return True
+    if args.color == ColorMode.OFF:
+        return False
+    return is_terminal_support_colors()
+
+
+def get_terminal_size(fallback=(80, 20)):
+    """Return a tuple of (terminal height, terminal width)."""
+    try:
+        return struct.unpack('hhhh', ioctl(sys.__stdout__, TIOCGWINSZ, '\000' * 8))[0:2]
+    except IOError:
+        # when the output stream or init descriptor is not a tty, such
+        # as when when stdout is piped to another program
+        pass
+    try:
+        return int(environ.get('LINES')), int(environ.get('COLUMNS'))
+    except TypeError:
+        return fallback
+
+
+def header(text, fillchar):
+    rows, columns = get_terminal_size()
+    print(" {} ".format(text).center(columns, fillchar))

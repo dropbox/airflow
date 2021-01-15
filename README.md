@@ -19,12 +19,14 @@
 # Apache Airflow
 
 [![PyPI version](https://badge.fury.io/py/apache-airflow.svg)](https://badge.fury.io/py/apache-airflow)
+![Airflow](https://github.com/apache/airflow/workflows/Airflow/badge.svg)
 [![Build Status](https://travis-ci.org/apache/airflow.svg?branch=master)](https://travis-ci.org/apache/airflow)
 [![Coverage Status](https://img.shields.io/codecov/c/github/apache/airflow/master.svg)](https://codecov.io/github/apache/airflow?branch=master)
 [![Documentation Status](https://readthedocs.org/projects/airflow/badge/?version=latest)](https://airflow.readthedocs.io/en/latest/?badge=latest)
 [![License](http://img.shields.io/:license-Apache%202-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0.txt)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/apache-airflow.svg)](https://pypi.org/project/apache-airflow/)
 [![Twitter Follow](https://img.shields.io/twitter/follow/ApacheAirflow.svg?style=social&label=Follow)](https://twitter.com/ApacheAirflow)
+[![Slack Status](https://img.shields.io/badge/slack-join_chat-white.svg?logo=slack&style=social)](https://s.apache.org/airflow-slack)
 
 _NOTE: The transition from 1.8.0 (or before) to 1.8.1 (or after) requires uninstalling Apache Airflow before installing the new version. The package name was changed from `airflow` to `apache-airflow` as of version 1.8.1._
 
@@ -39,10 +41,14 @@ Use Airflow to author workflows as directed acyclic graphs (DAGs) of tasks. The 
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of contents**
 
+- [Requirements](#requirements)
 - [Getting started](#getting-started)
+- [Installing from PyPI](#installing-from-pypi)
+- [Building customized production images](#building-customized-production-images)
 - [Beyond the Horizon](#beyond-the-horizon)
 - [Principles](#principles)
 - [User Interface](#user-interface)
+- [Using hooks and Operators from "master" in Airflow 1.10](#using-hooks-and-operators-from-master-in-airflow-110)
 - [Contributing](#contributing)
 - [Who uses Airflow?](#who-uses-airflow)
 - [Who Maintains Apache Airflow?](#who-maintains-apache-airflow)
@@ -51,12 +57,87 @@ Use Airflow to author workflows as directed acyclic graphs (DAGs) of tasks. The 
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
+## Requirements
+
+Apache Airflow is tested with:
+
+### Master version (2.0.0dev)
+
+* Python versions: 3.6, 3.7, 3.8
+* Postgres DB: 9.6, 10
+* MySQL DB: 5.7
+* Sqlite - latest stable (it is used mainly for development purpose)
+* Kubernetes - 1.16.2, 1.17.0
+
+### Stable version (1.10.11)
+
+* Python versions: 2.7, 3.5, 3.6, 3.7, 3.8
+* Postgres DB: 9.6, 10
+* MySQL DB: 5.6, 5.7
+* Sqlite - latest stable (it is used mainly for development purpose)
+* Kubernetes - 1.16.2, 1.17.0
+
+### Additional notes on Python version requirements
+
+* Stable version [requires](https://github.com/apache/airflow/issues/8162) at least Python 3.5.3 when using Python 3
+
 ## Getting started
 Please visit the Airflow Platform documentation (latest **stable** release) for help with [installing Airflow](https://airflow.apache.org/installation.html), getting a [quick start](https://airflow.apache.org/start.html), or a more complete [tutorial](https://airflow.apache.org/tutorial.html).
 
 Documentation of GitHub master (latest development branch): [ReadTheDocs Documentation](https://airflow.readthedocs.io/en/latest/)
 
 For further information, please visit the [Airflow Wiki](https://cwiki.apache.org/confluence/display/AIRFLOW/Airflow+Home).
+
+Official container (Docker) images for Apache Airflow are described in [IMAGES.rst](IMAGES.rst).
+
+## Installing from PyPI
+
+Airflow is published as `apache-airflow` package in PyPI. Installing it however might be sometimes tricky
+because Airflow is a bit of both a library and application. Libraries usually keep their dependencies open and
+applications usually pin them, but we should do neither and both at the same time. We decided to keep
+our dependencies as open as possible (in `setup.py`) so users can install different versions of libraries
+if needed. This means that from time to time plain `pip install apache-airflow` will not work or will
+produce unusable Airflow installation.
+
+In order to have repeatable installation, however, introduced in **Airflow 1.10.10** and updated in
+**Airflow 1.10.12** we also keep a set of "known-to-be-working" constraint files in the
+orphan `constraints-master` and `constraints-1-10` branches. We keep those "known-to-be-working"
+constraints files separately per major/minor python version.
+You can use them as constraint files when installing Airflow from PyPI. Note that you have to specify
+correct Airflow tag/version/branch and python versions in the URL.
+
+1. Installing just airflow:
+
+```bash
+pip install apache-airflow==1.10.12 \
+ --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-1.10.12/constraints-3.7.txt"
+```
+
+2. Installing with extras (for example postgres,gcp)
+```bash
+pip install apache-airflow[postgres,gcp]==1.10.11 \
+ --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-1.10.12/constraints-3.7.txt"
+```
+
+## Building customized production images
+
+In order to use Airflow in Docker Compose or Kubernetes, you might need to use or build production images
+of Apache Airflow. The community provides two types of support for the production images:
+
+* We provide pre-build relesed version of production image in PyPI build from released
+  sources of Apache Airflow - shortly after release. Those images are available in the DockerHub.
+  You can pull those images via `docker pull apache/airflow:<VERSION>-pythonX.Y` - version is the
+  version number (for example 1.10.11). Additionally `docker pull apache/airflow` will pull latest
+  stable version of the image with default python version (currently 3.6)
+
+* In `master` branch of Airflow and in `v1-10-stable` branch we provide Dockerfiles and accompanying
+  files that allow to build your own customized version of the Airflow Production image. The instructions
+  on how to build your own image with additional dependencies (if needed) are provided in the
+  [IMAGES.rst](IMAGES.rst#production-images) if you want to build it using `docker build` command or in
+  [BREEZE.rst](BREEZE.rst#building-production-images) to use Breeze tool which easier interface,
+  auto-complete, and accompanying screencast video. Note, that while it is possible to use master
+  branch to build images for released Airflow versions, it might at times get broken so you should
+  rather rely on building your own images from the v1-10-stable branch.
 
 ## Beyond the Horizon
 
@@ -99,6 +180,34 @@ unit of work and continuity.
 
 - **Code View**:  Quick way to view source code of a DAG.
 ![](/docs/img/code.png)
+
+
+## Using hooks and Operators from "master" in Airflow 1.10
+
+Currently stable versions of Apache Airflow are released in 1.10.* series. We are working on the
+future, major version of Airflow from the 2.0.* series. It is going to be released in
+in 2020. However the exact time of release depends on many factors and is yet unknown.
+We have already a lot of changes in the hooks/operators/sensors for many external systems
+and they are not used because they are part of the master/2.0 release.
+
+In the Airflow 2.0 - following AIP-21 "change in import paths" all the non-core operators/hooks/sensors
+of Apache Airflow have been moved to the "airflow.providers" package. This opened a possibility to
+use the operators from Airflow 2.0 in Airflow 1.10 - with the constraint that those
+packages can only be used in python3.6+ environment.
+
+Therefore we decided to prepare and release backport packages that can be installed
+for older Airflow versions. Those backport packages are released more frequently. Users do not
+have to upgrade their Airflow version to use those packages. There are a number of changes
+between Airflow 2.0 and 1.10.* - documented in [UPDATING.md](UPDATING.md). With backported
+providers package users can migrate their DAGs to the new providers package incrementally
+and once they convert to the new operators/sensors/hooks they can seamlessly migrate their
+environments to Airflow 2.0.
+
+More information about the status and releases of the back-ported packages are available
+at [Backported providers package page](https://cwiki.apache.org/confluence/display/AIRFLOW/Backported+providers+packages+for+Airflow+1.10.*+series)
+
+Dependencies between packages are stored in ``airflow/providers/dependencies.json``. See
+[CONTRIBUTING.rst](https://github.com/apache/airflow/blob/master/CONTRIBUTING.rst#backport-providers-packages)
 
 ## Contributing
 
@@ -307,5 +416,5 @@ Yes! Be sure to abide by the Apache Foundation [trademark policies](https://www.
 
 
 - [Documentation](https://airflow.apache.org/)
-- [Chat](https://apache-airflow-slack.herokuapp.com/)
+- [Chat](https://s.apache.org/airflow-slack)
 - [More](https://cwiki.apache.org/confluence/display/AIRFLOW/Airflow+Links)

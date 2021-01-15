@@ -19,10 +19,10 @@
 
 import pprint
 
-import airflow
 from airflow.models import DAG
 from airflow.operators.bash_operator import BashOperator
 from airflow.operators.python_operator import PythonOperator
+from airflow.utils.dates import days_ago
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -43,15 +43,11 @@ pp = pprint.PrettyPrinter(indent=4)
 #      state is then made available to the TargetDag
 # 2. A Target DAG : c.f. example_trigger_target_dag.py
 
-args = {
-    'start_date': airflow.utils.dates.days_ago(2),
-    'owner': 'Airflow',
-}
-
 dag = DAG(
-    dag_id='example_trigger_target_dag',
-    default_args=args,
+    dag_id="example_trigger_target_dag",
+    default_args={"start_date": days_ago(2), "owner": "Airflow"},
     schedule_interval=None,
+    tags=['example']
 )
 
 
@@ -70,7 +66,7 @@ run_this = PythonOperator(
 # You can also access the DagRun object in templates
 bash_task = BashOperator(
     task_id="bash_task",
-    bash_command='echo "Here is the message: '
-                 '{{ dag_run.conf["message"] if dag_run else "" }}" ',
+    bash_command='echo "Here is the message: $message"',
+    env={'message': '{{ dag_run.conf["message"] if dag_run else "" }}'},
     dag=dag,
 )

@@ -70,7 +70,7 @@ class LoggingMixin(object):
         try:
             return self._log
         except AttributeError:
-            self._log = logging.root.getChild(
+            self._log = logging.getLogger(
                 self.__class__.__module__ + '.' + self.__class__.__name__
             )
             return self._log
@@ -81,11 +81,11 @@ class LoggingMixin(object):
 
 
 class StreamLogWriter(object):
-    encoding = False
-
     """
     Allows to redirect stdout and stderr to logger
     """
+    encoding = None
+
     def __init__(self, logger, level):
         """
         :param log: The log level method to write to, ie. log.debug, log.warning

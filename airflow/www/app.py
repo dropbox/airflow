@@ -17,6 +17,7 @@
 # specific language governing permissions and limitations
 # under the License.
 #
+import logging
 from typing import Any
 
 import six
@@ -29,10 +30,10 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
 import airflow
-from airflow import models, version, LoggingMixin
+from airflow import models, version
 from airflow.configuration import conf
 from airflow.models.connection import Connection
-from airflow.settings import Session
+from airflow.settings import Session, STATE_COLORS
 
 from airflow.www.blueprints import routes
 from airflow.logging_config import configure_logging
@@ -41,6 +42,7 @@ from airflow import settings
 from airflow.utils.net import get_hostname
 
 csrf = CSRFProtect()
+log = logging.getLogger(__name__)
 
 
 def create_app(config=None, testing=False):
@@ -48,12 +50,11 @@ def create_app(config=None, testing=False):
     if conf.getboolean('webserver', 'ENABLE_PROXY_FIX'):
         app.wsgi_app = ProxyFix(
             app.wsgi_app,
-            num_proxies=conf.get("webserver", "PROXY_FIX_NUM_PROXIES", fallback=None),
-            x_for=conf.get("webserver", "PROXY_FIX_X_FOR", fallback=1),
-            x_proto=conf.get("webserver", "PROXY_FIX_X_PROTO", fallback=1),
-            x_host=conf.get("webserver", "PROXY_FIX_X_HOST", fallback=1),
-            x_port=conf.get("webserver", "PROXY_FIX_X_PORT", fallback=1),
-            x_prefix=conf.get("webserver", "PROXY_FIX_X_PREFIX", fallback=1)
+            x_for=conf.getint("webserver", "PROXY_FIX_X_FOR", fallback=1),
+            x_proto=conf.getint("webserver", "PROXY_FIX_X_PROTO", fallback=1),
+            x_host=conf.getint("webserver", "PROXY_FIX_X_HOST", fallback=1),
+            x_port=conf.getint("webserver", "PROXY_FIX_X_PORT", fallback=1),
+            x_prefix=conf.getint("webserver", "PROXY_FIX_X_PREFIX", fallback=1)
         )
     app.secret_key = conf.get('webserver', 'SECRET_KEY')
     app.config['LOGIN_DISABLED'] = not conf.getboolean(
@@ -132,6 +133,10 @@ def create_app(config=None, testing=False):
             airflow_doc_site = 'https://airflow.apache.org/docs/{}'.format(version.version)
 
         admin.add_link(base.MenuLink(
+            name="Website",
+            url='https://airflow.apache.org',
+            category="Docs"))
+        admin.add_link(base.MenuLink(
             category='Docs', name='Documentation',
             url=airflow_doc_site))
         admin.add_link(
@@ -149,7 +154,6 @@ def create_app(config=None, testing=False):
 
         def integrate_plugins():
             """Integrate plugins to the context"""
-            log = LoggingMixin().log
             from airflow.plugins_manager import (
                 admin_views, flask_blueprints, menu_links)
             for v in admin_views:
@@ -175,9 +179,35 @@ def create_app(config=None, testing=False):
         @app.context_processor
         def jinja_globals():
             return {
-                'hostname': get_hostname(),
-                'navbar_color': conf.get('webserver', 'NAVBAR_COLOR'),
+                'hostname': get_hostname() if conf.getboolean(
+                    'webserver', 'EXPOSE_HOSTNAME',
+                    fallback=True) else 'redact',
+                'navbar_color': conf.get(
+                    'webserver', 'NAVBAR_COLOR'),
+                'log_fetch_delay_sec': conf.getint(
+                    'webserver', 'log_fetch_delay_sec', fallback=2),
+                'log_auto_tailing_offset': conf.getint(
+                    'webserver', 'log_auto_tailing_offset', fallback=30),
+                'log_animation_speed': conf.getint(
+                    'webserver', 'log_animation_speed', fallback=1000),
+                'state_color_mapping': STATE_COLORS
             }
+
+        @app.before_request
+        def before_request():
+            _force_log_out_after = conf.getint('webserver', 'FORCE_LOG_OUT_AFTER', fallback=0)
+            if _force_log_out_after > 0:
+                flask.session.permanent = True
+                app.permanent_session_lifetime = datetime.timedelta(minutes=_force_log_out_after)
+                flask.session.modified = True
+                flask.g.user = flask_login.current_user
+
+        @app.after_request
+        def apply_caching(response):
+            _x_frame_enabled = conf.getboolean('webserver', 'X_FRAME_ENABLED', fallback=True)
+            if not _x_frame_enabled:
+                response.headers["X-Frame-Options"] = "DENY"
+            return response
 
         @app.teardown_appcontext
         def shutdown_session(exception=None):

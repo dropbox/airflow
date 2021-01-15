@@ -16,7 +16,13 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+"""CeleryExecutor
 
+.. seealso::
+    For more information on how the CeleryExecutor works, take a look at the guide:
+    :ref:`executor:CeleryExecutor`
+"""
+import logging
 import math
 import os
 import subprocess
@@ -31,14 +37,17 @@ from airflow.configuration import conf
 from airflow.config_templates.default_celery import DEFAULT_CELERY_CONFIG
 from airflow.exceptions import AirflowException
 from airflow.executors.base_executor import BaseExecutor
-from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.module_loading import import_string
 from airflow.utils.timeout import timeout
+
+log = logging.getLogger(__name__)
 
 # Make it constant for unit test.
 CELERY_FETCH_ERR_MSG_HEADER = 'Error fetching Celery task state'
 
 CELERY_SEND_ERR_MSG_HEADER = 'Error sending Celery task'
+
+OPERATION_TIMEOUT = conf.getint('celery', 'operation_timeout', fallback=2)
 
 '''
 To start the celery worker, run the command:
@@ -59,7 +68,9 @@ app = Celery(
 
 @app.task
 def execute_command(command_to_exec):
-    log = LoggingMixin().log
+    """Executes command."""
+    if command_to_exec[0:2] != ["airflow", "run"]:
+        raise ValueError('The command must start with ["airflow", "run"].')
     log.info("Executing command in Celery: %s", command_to_exec)
     env = os.environ.copy()
     try:
@@ -100,7 +111,7 @@ def fetch_celery_task_state(celery_task):
     """
 
     try:
-        with timeout(seconds=2):
+        with timeout(seconds=OPERATION_TIMEOUT):
             # Accessing state property of celery task will make actual network request
             # to get the current state of the task.
             res = (celery_task[0], celery_task[1].state)
@@ -114,7 +125,7 @@ def fetch_celery_task_state(celery_task):
 def send_task_to_executor(task_tuple):
     key, simple_ti, command, queue, task = task_tuple
     try:
-        with timeout(seconds=2):
+        with timeout(seconds=OPERATION_TIMEOUT):
             result = task.apply_async(args=[command], queue=queue)
     except Exception as e:
         exception_traceback = "Celery Task ID: {}\n{}".format(key,
@@ -220,7 +231,7 @@ class CeleryExecutor(BaseExecutor):
 
             for key, command, result in key_and_async_results:
                 if isinstance(result, ExceptionWithTraceback):
-                    self.log.error(
+                    self.log.error(  # pylint: disable=logging-not-lazy
                         CELERY_SEND_ERR_MSG_HEADER + ":%s\n%s\n", result.exception, result.traceback
                     )
                 elif result is not None:
@@ -259,7 +270,7 @@ class CeleryExecutor(BaseExecutor):
 
         for key_and_state in task_keys_to_states:
             if isinstance(key_and_state, ExceptionWithTraceback):
-                self.log.error(
+                self.log.error(  # pylint: disable=logging-not-lazy
                     CELERY_FETCH_ERR_MSG_HEADER + ", ignoring it:%s\n%s\n",
                     repr(key_and_state.exception), key_and_state.traceback
                 )

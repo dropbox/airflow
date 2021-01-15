@@ -36,11 +36,11 @@ These are examples of the development options available with the local virtualen
 
 * local debugging;
 * Airflow source view;
-* autocompletion;
+* auto-completion;
 * documentation support;
 * unit tests.
 
-This document describes minimum requirements and insructions for using a standalone version of the local virtualenv.
+This document describes minimum requirements and instructions for using a standalone version of the local virtualenv.
 
 Prerequisites
 =============
@@ -55,7 +55,7 @@ Homebrew for macOS to install required software packages:
 * MySQL
 * libxml
 
-Refer to the `Dockerfile <Dockerfile>`__ for a comprehensive list
+Refer to the `Dockerfile.ci <Dockerfile.ci>`__ for a comprehensive list
 of required packages.
 
 Extra Packages
@@ -91,51 +91,77 @@ To use your IDE for Airflow development and testing, you need to configure a vir
 environment. Ideally you should set up virtualenv for all Python versions that Airflow
 supports (2.7, 3.5, 3.6).
 
-Consider using one of the following utilities to create virtual environments and easily
-switch between them with the ``workon`` command:
-
-- `pyenv <https://github.com/pyenv/pyenv>`_
-- `pyenv-virtualenv <https://github.com/pyenv/pyenv-virtualenv>`_
-- `virtualenvwrapper <https://virtualenvwrapper.readthedocs.io/en/latest/>`_
-
 To create and initialize the local virtualenv:
 
-1. Create an environment as follows:
+1. Create an environment with one of the two options:
 
-   ``mkvirtualenv <ENV_NAME> --python=python<VERSION>``
+   - Option 1: consider using one of the following utilities to create virtual environments and easily switch between them with the ``workon`` command:
+
+    - `pyenv <https://github.com/pyenv/pyenv>`_
+    - `pyenv-virtualenv <https://github.com/pyenv/pyenv-virtualenv>`_
+    - `virtualenvwrapper <https://virtualenvwrapper.readthedocs.io/en/latest/>`_
+
+    ``mkvirtualenv <ENV_NAME> --python=python<VERSION>``
+
+   - Option 2: create a local virtualenv with Conda
+
+    - install `miniconda3 <https://docs.conda.io/en/latest/miniconda.html>`_
+
+    .. code-block:: bash
+
+      conda create -n airflow python=3.6
+      conda activate airflow
 
 2. Install Python PIP requirements:
 
-   ``pip install -e ".[devel]"``
+   .. code-block:: bash
+
+    pip install -U -e ".[devel,<OTHER EXTRAS>]" # for example: pip install -U -e ".[devel,gcp,postgres]"
+
+In case you have problems with installing airflow because of some requirements are not installable, you can
+try to install it with the set of working constraints (note that there are different constraint files
+for different python versions:
+
+   .. code-block:: bash
+
+    pip install -U -e ".[devel,<OTHER EXTRAS>]" \
+        --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-master/constraints-3.6.txt"
+
+Note: when you first initialize database (the next step), you may encounter some problems.
+This is because airflow by default will try to load in example dags where some of them requires dependencies ``gcp`` and ``postgres``.
+You can solve the problem by:
+
+- installing the extras i.e. ``[devel,gcp,postgres]`` or
+- disable the example dags with environment variable: ``export AIRFLOW__CORE__LOAD_EXAMPLES=False`` or
+- simply ignore the error messages and proceed
+
+*In addition to above, you may also encounter problems during database migration.*
+*This is a known issue and please see the progress here:* `AIRFLOW-6265 <https://issues.apache.org/jira/browse/AIRFLOW-6265>`_
 
 3. Create the Airflow sqlite database:
 
-   ``airflow db init``
+   .. code-block:: bash
+
+    # if necessary, start with a clean AIRFLOW_HOME, e.g.
+    # rm -rf ~/airflow
+    airflow db init
 
 4. Select the virtualenv you created as the project's default virtualenv in your IDE.
 
 Note that if you have the Breeze development environment installed, the ``breeze``
 script can automate initializing the created virtualenv (steps 2 and 3).
-Simply enter the Breeze environment by using ``workon`` and, once you are in it, run:
+Activate your virtualenv, e.g. by using ``workon``, and once you are in it, run:
 
 .. code-block:: bash
 
-  ./breeze --initialize-local-virtualenv
+  ./breeze initialize-local-virtualenv
 
-Optional - create a local virtualenv with conda
------------------------------------------------
-
-- install `miniconda3 <https://docs.conda.io/en/latest/miniconda.html>`_
+5. (optionally) run yarn build if you plan to run the webserver
 
 .. code-block:: bash
 
-  conda create -n airflow python=3.6
-  conda activate airflow
-  pip install -U -e ".[devel,gcp,postgres,ssh]"
-
-  # if necessary, start with a clean AIRFLOW_HOME, e.g.
-  # rm -rf ~/airflow
-  airflow db init
+    cd airflow/www
+    yarn build
 
 Running Tests
 -------------

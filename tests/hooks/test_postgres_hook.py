@@ -24,6 +24,7 @@ import unittest
 from tempfile import NamedTemporaryFile
 
 import psycopg2.extras
+import pytest
 
 from airflow.hooks.postgres_hook import PostgresHook
 from airflow.models import Connection
@@ -127,6 +128,7 @@ class TestPostgresHook(unittest.TestCase):
             with conn.cursor() as cur:
                 cur.execute("DROP TABLE IF EXISTS {}".format(self.table))
 
+    @pytest.mark.backend("postgres")
     def test_copy_expert(self):
         m = mock.mock_open(read_data='{"some": "json"}')
         with mock.patch('airflow.hooks.postgres_hook.open', m):
@@ -143,6 +145,7 @@ class TestPostgresHook(unittest.TestCase):
             self.cur.copy_expert.assert_called_once_with(statement, m.return_value)
             self.assertEqual(m.call_args[0], (filename, "r+"))
 
+    @pytest.mark.backend("postgres")
     def test_bulk_load(self):
         hook = PostgresHook()
         input_data = ["foo", "bar", "baz"]
@@ -162,6 +165,7 @@ class TestPostgresHook(unittest.TestCase):
 
         self.assertEqual(sorted(input_data), sorted(results))
 
+    @pytest.mark.backend("postgres")
     def test_bulk_dump(self):
         hook = PostgresHook()
         input_data = ["foo", "bar", "baz"]
@@ -179,3 +183,62 @@ class TestPostgresHook(unittest.TestCase):
                     results = [line.rstrip().decode("utf-8") for line in f.readlines()]
 
         self.assertEqual(sorted(input_data), sorted(results))
+
+    @pytest.mark.backend("postgres")
+    def test_insert_rows(self):
+        table = "table"
+        rows = [("hello",),
+                ("world",)]
+
+        self.db_hook.insert_rows(table, rows)
+
+        assert self.conn.close.call_count == 1
+        assert self.cur.close.call_count == 1
+
+        commit_count = 2  # The first and last commit
+        self.assertEqual(commit_count, self.conn.commit.call_count)
+
+        sql = "INSERT INTO {}  VALUES (%s)".format(table)
+        for row in rows:
+            self.cur.execute.assert_any_call(sql, row)
+
+    @pytest.mark.backend("postgres")
+    def test_insert_rows_replace(self):
+        table = "table"
+        rows = [(1, "hello",),
+                (2, "world",)]
+        fields = ("id", "value")
+
+        self.db_hook.insert_rows(
+            table, rows, fields, replace=True, replace_index=fields[0])
+
+        assert self.conn.close.call_count == 1
+        assert self.cur.close.call_count == 1
+
+        commit_count = 2  # The first and last commit
+        self.assertEqual(commit_count, self.conn.commit.call_count)
+
+        sql = "INSERT INTO {0} ({1}, {2}) VALUES (%s,%s) " \
+              "ON CONFLICT ({1}) DO UPDATE SET {2} = excluded.{2}".format(
+                  table, fields[0], fields[1])
+        for row in rows:
+            self.cur.execute.assert_any_call(sql, row)
+
+    @pytest.mark.xfail
+    @pytest.mark.backend("postgres")
+    def test_insert_rows_replace_missing_target_field_arg(self):
+        table = "table"
+        rows = [(1, "hello",),
+                (2, "world",)]
+        fields = ("id", "value")
+        self.db_hook.insert_rows(
+            table, rows, replace=True, replace_index=fields[0])
+
+    @pytest.mark.xfail
+    @pytest.mark.backend("postgres")
+    def test_insert_rows_replace_missing_replace_index_arg(self):
+        table = "table"
+        rows = [(1, "hello",),
+                (2, "world",)]
+        fields = ("id", "value")
+        self.db_hook.insert_rows(table, rows, fields, replace=True)

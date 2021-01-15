@@ -68,7 +68,6 @@ attack. Creating a new user has to be done via a Python REPL on the same machine
     $ python
     Python 2.7.9 (default, Feb 10 2015, 03:28:08)
     Type "help", "copyright", "credits" or "license" for more information.
-    >>> import airflow
     >>> from airflow import models, settings
     >>> from airflow.contrib.auth.backends.password_auth import PasswordUser
     >>> user = PasswordUser(models.User())
@@ -83,6 +82,12 @@ attack. Creating a new user has to be done via a Python REPL on the same machine
 
 LDAP
 ''''
+
+.. note::
+
+   This is for flask-admin based web UI only. If you are using FAB-based web UI with RBAC feature,
+   check the `Security section of FAB docs <https://flask-appbuilder.readthedocs.io/en/latest/security.html>`_
+   for how to configure in ``webserver_config.py`` file.
 
 To turn on LDAP authentication configure your ``airflow.cfg`` as follows. Please note that the example uses
 an encrypted connection to the ldap server as we do not want passwords be readable on the network level.
@@ -149,6 +154,55 @@ only the dags which it is owner of, unless it is a superuser.
 
     [webserver]
     filter_by_owner = True
+
+
+API Authentication
+------------------
+
+Authentication for the API is handled separately to the Web Authentication. The default is to
+deny all requests:
+
+.. code-block:: ini
+
+    [api]
+    auth_backend = airflow.api.auth.backend.deny_all
+
+.. versionchanged:: 1.10.11
+
+    In Airflow <1.10.11, the default setting was to allow all API requests without authentication, but this
+    posed security risks for if the Webserver is publicly accessible.
+
+If you wish to have the experimental API work, and aware of the risks of enabling this without authentication
+(or if you have your own authentication layer in front of Airflow) you can set the following in ``airflow.cfg``:
+
+.. code-block:: ini
+
+    [api]
+    auth_backend = airflow.api.auth.backend.default
+
+Two "real" methods for authentication are currently supported for the API.
+
+To enabled Password authentication, set the following in the configuration:
+
+.. code-block:: ini
+
+    [api]
+    auth_backend = airflow.contrib.auth.backends.password_auth
+
+It's usage is similar to the Password Authentication used for the Web interface.
+
+To enable Kerberos authentication, set the following in the configuration:
+
+.. code-block:: ini
+
+    [api]
+    auth_backend = airflow.api.auth.backend.kerberos_auth
+
+    [kerberos]
+    keytab = <KEYTAB>
+
+The Kerberos service is configured as ``airflow/fully.qualified.domainname@REALM``. Make sure this
+principal exists in the keytab file.
 
 
 Kerberos
@@ -269,12 +323,18 @@ To use kerberos authentication, you must install Airflow with the ``kerberos`` e
 OAuth Authentication
 --------------------
 
+.. note::
+
+   This is for flask-admin based web UI only. If you are using FAB-based web UI with RBAC feature,
+   check the `Security section of FAB docs <https://flask-appbuilder.readthedocs.io/en/latest/security.html>`_
+   for how to configure in ``webserver_config.py`` file.
+
 GitHub Enterprise (GHE) Authentication
 ''''''''''''''''''''''''''''''''''''''
 
 The GitHub Enterprise authentication backend can be used to authenticate users
 against an installation of GitHub Enterprise using OAuth2. You can optionally
-specify a team whitelist (composed of slug cased team names) to restrict login
+specify a team allowed list (composed of slug cased team names) to restrict login
 to only members of those teams.
 
 .. code-block:: bash
@@ -290,7 +350,7 @@ to only members of those teams.
     oauth_callback_route = /example/ghe_oauth/callback
     allowed_teams = 1, 345, 23
 
-.. note:: If you do not specify a team whitelist, anyone with a valid account on
+.. note:: If you do not specify a team allowed list, anyone with a valid account on
    your GHE installation will be able to login to Airflow.
 
 To use GHE authentication, you must install Airflow with the ``github_enterprise`` extras group:
@@ -339,7 +399,7 @@ login, separated with a comma, to only members of those domains.
     client_id = google_client_id
     client_secret = google_client_secret
     oauth_callback_route = /oauth2callback
-    domain = "example1.com,example2.com"
+    domain = example1.com,example2.com
 
 To use Google authentication, you must install Airflow with the ``google_auth`` extras group:
 
@@ -394,6 +454,17 @@ certs and keys.
     ssl_cert = <path to cert>
     ssl_cacert = <path to cacert>
 
+Rendering Airflow UI in a Web Frame from another site
+------------------------------------------------------
+
+Using Airflow in a web frame is enabled by default. To disable this (and prevent click jacking attacks)
+set the below:
+
+.. code-block:: ini
+
+    [webserver]
+    x_frame_enabled = False
+
 Impersonation
 -------------
 
@@ -433,7 +504,7 @@ Basic authentication for Celery Flower is supported.
 
 You can specify the details either as an optional argument in the Flower process launching
 command, or as a configuration item in your ``airflow.cfg``. For both cases, please provide
-`user:password` pairs separated by a comma.
+``user:password`` pairs separated by a comma.
 
 .. code-block:: bash
 
@@ -472,7 +543,7 @@ Viewer
 ^^^^^^
 ``Viewer`` users have limited viewer permissions
 
-.. code:: python
+.. code-block:: python
 
     VIEWER_PERMS = {
         'menu_access',
@@ -503,7 +574,7 @@ Viewer
 
 on limited web views
 
-.. code:: python
+.. code-block:: python
 
     VIEWER_VMS = {
         'Airflow',
@@ -531,7 +602,7 @@ User
 ^^^^
 ``User`` users have ``Viewer`` permissions plus additional user permissions
 
-.. code:: python
+.. code-block:: python
 
     USER_PERMS = {
         'can_dagrun_clear',
@@ -558,7 +629,7 @@ Op
 ^^
 ``Op`` users have ``User`` permissions plus additional op permissions
 
-.. code:: python
+.. code-block:: python
 
     OP_PERMS = {
         'can_conf',
@@ -567,7 +638,7 @@ Op
 
 on ``User`` web views plus these additional op web views
 
-.. code:: python
+.. code-block:: python
 
     OP_VMS = {
         'Admin',
@@ -591,3 +662,50 @@ DAG Level Role
 ``Admin`` can create a set of roles which are only allowed to view a certain set of dags. This is called DAG level access. Each dag defined in the dag model table
 is treated as a ``View`` which has two permissions associated with it (``can_dag_read`` and ``can_dag_edit``). There is a special view called ``all_dags`` which
 allows the role to access all the dags. The default ``Admin``, ``Viewer``, ``User``, ``Op`` roles can all access ``all_dags`` view.
+
+
+.. _security/fernet:
+
+Securing Connections
+--------------------
+
+Airflow uses `Fernet <https://github.com/fernet/spec/>`__ to encrypt passwords in the connection
+configuration. It guarantees that a password encrypted using it cannot be manipulated or read without the key.
+Fernet is an implementation of symmetric (also known as “secret key”) authenticated cryptography.
+
+The first time Airflow is started, the ``airflow.cfg`` file is generated with the default configuration and the unique Fernet
+key. The key is saved to option ``fernet_key`` of section ``[core]``.
+
+You can also configure a fernet key using environment variables. This will overwrite the value from the
+``airflow.cfg`` file
+
+    .. code-block:: bash
+
+      # Note the double underscores
+      export AIRFLOW__CORE__FERNET_KEY=your_fernet_key
+
+Generating fernet key
+'''''''''''''''''''''
+
+If you need to generate a new fernet key you can use the following code snippet.
+
+    .. code-block:: python
+
+      from cryptography.fernet import Fernet
+      fernet_key= Fernet.generate_key()
+      print(fernet_key.decode()) # your fernet_key, keep it in secured place!
+
+
+Rotating encryption keys
+''''''''''''''''''''''''
+
+Once connection credentials and variables have been encrypted using a fernet
+key, changing the key will cause decryption of existing credentials to fail. To
+rotate the fernet key without invalidating existing encrypted values, prepend
+the new key to the ``fernet_key`` setting, run
+``airflow rotate_fernet_key``, and then drop the original key from
+``fernet_keys``:
+
+#. Set ``fernet_key`` to ``new_fernet_key,old_fernet_key``
+#. Run ``airflow rotate_fernet_key`` to re-encrypt existing credentials with the new fernet key
+#. Set ``fernet_key`` to ``new_fernet_key``

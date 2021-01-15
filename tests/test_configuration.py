@@ -21,7 +21,9 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import contextlib
+import io
 import os
+import tempfile
 import warnings
 from collections import OrderedDict
 
@@ -30,6 +32,7 @@ import six
 from airflow import configuration
 from airflow.configuration import conf, AirflowConfigParser, parameterized_config
 from tests.compat import mock
+from tests.test_utils.config import conf_vars
 from tests.test_utils.reset_warning_registry import reset_warning_registry
 
 if six.PY2:
@@ -138,6 +141,8 @@ class ConfTest(unittest.TestCase):
         self.assertEqual(
             cfg_dict['core']['load_examples'][1], 'airflow.cfg')
         self.assertEqual(
+            cfg_dict['core']['load_default_connections'][1], 'airflow.cfg')
+        self.assertEqual(
             cfg_dict['testsection']['testkey'], ('< hidden >', 'env var'))
 
     def test_conf_as_dict_sensitive(self):
@@ -186,7 +191,7 @@ key6 = value6
         test_conf = AirflowConfigParser(
             default_config=parameterized_config(TEST_CONFIG_DEFAULT))
         test_conf.read_string(TEST_CONFIG)
-        test_conf.as_command_stdout = test_conf.as_command_stdout | {
+        test_conf.sensitive_config_values = test_conf.sensitive_config_values | {
             ('test', 'key2'),
             ('test', 'key4'),
         }
@@ -219,6 +224,46 @@ key6 = value6
         cfg_dict = test_conf.as_dict(include_cmds=False, display_sensitive=True)
         self.assertNotIn('key4', cfg_dict['test'])
         self.assertEqual('printf key4_result', cfg_dict['test']['key4_cmd'])
+
+    @mock.patch("airflow.contrib.secrets.hashicorp_vault.hvac")
+    @conf_vars({
+        ("secrets", "backend"): "airflow.contrib.secrets.hashicorp_vault.VaultBackend",
+        ("secrets", "backend_kwargs"): '{"url": "http://127.0.0.1:8200", "token": "token"}',
+    })
+    def test_config_from_secret_backend(self, mock_hvac):
+        """Get Config Value from a Secret Backend"""
+        mock_client = mock.MagicMock()
+        mock_hvac.Client.return_value = mock_client
+        mock_client.secrets.kv.v2.read_secret_version.return_value = {
+            'request_id': '2d48a2ad-6bcb-e5b6-429d-da35fdf31f56',
+            'lease_id': '',
+            'renewable': False,
+            'lease_duration': 0,
+            'data': {'data': {'value': 'sqlite:////Users/airflow/airflow/airflow.db'},
+                     'metadata': {'created_time': '2020-03-28T02:10:54.301784Z',
+                                  'deletion_time': '',
+                                  'destroyed': False,
+                                  'version': 1}},
+            'wrap_info': None,
+            'warnings': None,
+            'auth': None
+        }
+
+        test_config = '''[test]
+sql_alchemy_conn_secret = sql_alchemy_conn
+'''
+        test_config_default = '''[test]
+sql_alchemy_conn = airflow
+'''
+
+        test_conf = AirflowConfigParser(default_config=parameterized_config(test_config_default))
+        test_conf.read_string(test_config)
+        test_conf.sensitive_config_values = test_conf.sensitive_config_values | {
+            ('test', 'sql_alchemy_conn'),
+        }
+
+        self.assertEqual(
+            'sqlite:////Users/airflow/airflow/airflow.db', test_conf.get('test', 'sql_alchemy_conn'))
 
     def test_getboolean(self):
         """Test AirflowConfigParser.getboolean"""
@@ -341,6 +386,21 @@ key3 = value3
             test_conf.getsection('testsection')
         )
 
+    def test_get_section_should_respect_cmd_env_variable(self):
+        with tempfile.NamedTemporaryFile(delete=False) as cmd_file:
+            cmd_file.write("#!/usr/bin/env bash\n".encode())
+            cmd_file.write("echo -n difficult_unpredictable_cat_password\n".encode())
+            cmd_file.flush()
+            os.chmod(cmd_file.name, 0o0555)
+            cmd_file.close()
+
+            with mock.patch.dict(
+                "os.environ", {"AIRFLOW__KUBERNETES__GIT_PASSWORD_CMD": cmd_file.name}
+            ):
+                content = conf.getsection("kubernetes")
+            os.unlink(cmd_file.name)
+        self.assertEqual(content["git_password"], "difficult_unpredictable_cat_password")
+
     def test_kubernetes_environment_variables_section(self):
         TEST_CONFIG = '''
 [kubernetes_environment_variables]
@@ -390,7 +450,7 @@ AIRFLOW_HOME = /root/airflow
         # Guarantee we have a deprecated setting, so we test the deprecation
         # lookup even if we remove this explicit fallback
         conf.deprecated_options['celery'] = {'result_backend': 'celery_result_backend'}
-        conf.as_command_stdout.add(('celery', 'celery_result_backend'))
+        conf.sensitive_config_values.add(('celery', 'celery_result_backend'))
 
         conf.remove_option('celery', 'result_backend')
         conf.set('celery', 'celery_result_backend_cmd', '/bin/echo 99')
@@ -458,13 +518,39 @@ notacommand = OK
 '''
         test_cmdenv_conf = AirflowConfigParser()
         test_cmdenv_conf.read_string(TEST_CMDENV_CONFIG)
-        test_cmdenv_conf.as_command_stdout.add(('testcmdenv', 'itsacommand'))
+        test_cmdenv_conf.sensitive_config_values.add(('testcmdenv', 'itsacommand'))
         with mock.patch.dict('os.environ'):
             # AIRFLOW__TESTCMDENV__ITSACOMMAND_CMD maps to ('testcmdenv', 'itsacommand') in
-            # as_command_stdout and therefore should return 'OK' from the environment variable's
+            # sensitive_config_values and therefore should return 'OK' from the environment variable's
             # echo command, and must not return 'NOT OK' from the configuration
             self.assertEqual(test_cmdenv_conf.get('testcmdenv', 'itsacommand'), 'OK')
-            # AIRFLOW__TESTCMDENV__NOTACOMMAND_CMD maps to no entry in as_command_stdout and therefore
+            # AIRFLOW__TESTCMDENV__NOTACOMMAND_CMD maps to no entry in sensitive_config_values and therefore
             # the option should return 'OK' from the configuration, and must not return 'NOT OK' from
             # the environement variable's echo command
             self.assertEqual(test_cmdenv_conf.get('testcmdenv', 'notacommand'), 'OK')
+
+    @mock.patch.dict("os.environ", {"AIRFLOW__CORE__DAGS_FOLDER": "/tmp/test_folder"})
+    def test_write_should_respect_env_variable(self):
+        with io.StringIO() as string_file:
+            conf.write(string_file)
+            content = string_file.getvalue()
+        self.assertIn("dags_folder = /tmp/test_folder", content)
+
+    @conf_vars({("core", "store_serialized_dags"): "True"})
+    def test_store_dag_code_default_config(self):
+        store_serialized_dags = conf.getboolean('core', 'store_serialized_dags', fallback=False)
+        store_dag_code = conf.getboolean("core", "store_dag_code", fallback=store_serialized_dags)
+        self.assertFalse(conf.has_option("core", "store_dag_code"))
+        self.assertTrue(store_serialized_dags)
+        self.assertTrue(store_dag_code)
+
+    @conf_vars({
+        ("core", "store_serialized_dags"): "True",
+        ("core", "store_dag_code"): "False"
+    })
+    def test_store_dag_code_config_when_set(self):
+        store_serialized_dags = conf.getboolean('core', 'store_serialized_dags', fallback=False)
+        store_dag_code = conf.getboolean("core", "store_dag_code", fallback=store_serialized_dags)
+        self.assertTrue(conf.has_option("core", "store_dag_code"))
+        self.assertTrue(store_serialized_dags)
+        self.assertFalse(store_dag_code)

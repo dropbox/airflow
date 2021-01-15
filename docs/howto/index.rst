@@ -32,6 +32,7 @@ configuring an Airflow environment.
     set-config
     initialize-database
     operator/index
+    customize-state-colors-ui
     custom-operator
     connection/index
     secure-connections
@@ -42,5 +43,6 @@ configuring an Airflow environment.
     use-test-config
     check-health
     define_extra_link
+    email-config
     tracking-user-activity
-    cli-completion
+    use-alternative-secrets-backend

@@ -44,7 +44,7 @@ class DockerOperatorTestCase(unittest.TestCase):
         client_mock.images.return_value = []
         client_mock.attach.return_value = ['container log']
         client_mock.logs.return_value = ['container log']
-        client_mock.pull.return_value = [b'{"status":"pull log"}']
+        client_mock.pull.return_value = {"status": "pull log"}
         client_mock.wait.return_value = {"StatusCode": 0}
 
         client_class_mock.return_value = client_mock
@@ -85,8 +85,11 @@ class DockerOperatorTestCase(unittest.TestCase):
         client_mock.images.assert_called_with(name='ubuntu:latest')
         client_mock.attach.assert_called_with(container='some_id', stdout=True,
                                               stderr=True, stream=True)
-        client_mock.pull.assert_called_with('ubuntu:latest', stream=True)
+        client_mock.pull.assert_called_with('ubuntu:latest', stream=True,
+                                            decode=True)
         client_mock.wait.assert_called_with('some_id')
+        self.assertEqual(operator.cli.pull('ubuntu:latest', stream=True, decode=True),
+                         client_mock.pull.return_value)
 
     @mock.patch('airflow.operators.docker_operator.tls.TLSConfig')
     @mock.patch('airflow.operators.docker_operator.APIClient')
@@ -239,6 +242,45 @@ class DockerOperatorTestCase(unittest.TestCase):
             client_mock.pull.call_count, 1,
             'Image was not pulled using operator client'
         )
+
+    @mock.patch('airflow.operators.docker_operator.TemporaryDirectory')
+    @mock.patch('airflow.operators.docker_operator.APIClient')
+    def test_execute_xcom_behavior(self, client_class_mock, tempdir_mock):
+        tempdir_mock.return_value.__enter__.return_value = '/mkdtemp'
+
+        client_mock = mock.Mock(spec=APIClient)
+        client_mock.images.return_value = []
+        client_mock.create_container.return_value = {'Id': 'some_id'}
+        client_mock.attach.return_value = ['container log']
+        client_mock.pull.return_value = {"status": "pull log"}
+        client_mock.wait.return_value = {"StatusCode": 0}
+
+        client_class_mock.return_value = client_mock
+
+        kwargs = {
+            'api_version': '1.19',
+            'command': 'env',
+            'environment': {'UNIT': 'TEST'},
+            'image': 'ubuntu:latest',
+            'network_mode': 'bridge',
+            'owner': 'unittest',
+            'task_id': 'unittest',
+            'volumes': ['/host/path:/container/path'],
+            'working_dir': '/container/path',
+            'shm_size': 1000,
+            'host_tmp_dir': '/host/airflow',
+            'container_name': 'test_container',
+            'tty': True,
+        }
+
+        xcom_push_operator = DockerOperator(xcom_push=True, **kwargs)
+        no_xcom_push_operator = DockerOperator(xcom_push=False, **kwargs)
+
+        xcom_push_result = xcom_push_operator.execute(None)
+        no_xcom_push_result = no_xcom_push_operator.execute(None)
+
+        self.assertEqual(xcom_push_result, 'container log')
+        self.assertIs(no_xcom_push_result, None)
 
 
 if __name__ == "__main__":

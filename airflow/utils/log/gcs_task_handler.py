@@ -66,7 +66,7 @@ class GCSTaskHandler(FileTaskHandler, LoggingMixin):
 
     def close(self):
         """
-        Close and upload local log file to remote storage S3.
+        Close and upload local log file to remote storage GCS.
         """
         # When application exit, system shuts down all handlers by
         # calling close method. Here we check if logger is already
@@ -128,7 +128,7 @@ class GCSTaskHandler(FileTaskHandler, LoggingMixin):
         :type remote_log_location: str (path)
         """
         bkt, blob = self.parse_gcs_url(remote_log_location)
-        return self.hook.download(bkt, blob).decode()
+        return self.hook.download(bkt, blob).decode('utf-8')
 
     def gcs_write(self, log, remote_log_location, append=True):
         """

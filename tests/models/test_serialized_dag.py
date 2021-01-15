@@ -19,11 +19,13 @@
 
 """Unit tests for SerializedDagModel."""
 
+import six
 import unittest
 
 from airflow import example_dags as example_dags_module
 from airflow.serialization.serialized_objects import SerializedDAG
 from airflow.models import DagBag
+from airflow.models.dagcode import DagCode
 from airflow.models.serialized_dag import SerializedDagModel as SDM
 from airflow.utils import db
 
@@ -51,7 +53,8 @@ class SerializedDagModelTest(unittest.TestCase):
 
     def test_dag_fileloc_hash(self):
         """Verifies the correctness of hashing file path."""
-        self.assertTrue(SDM.dag_fileloc_hash('/airflow/dags/test_dag.py') == 60791)
+        self.assertEqual(DagCode.dag_fileloc_hash('/airflow/dags/test_dag.py'),
+                         33826252060516589)
 
     def _write_example_dags(self):
         example_dags = make_example_dags(example_dags_module)
@@ -73,6 +76,35 @@ class SerializedDagModelTest(unittest.TestCase):
                 # Verifies JSON schema.
                 SerializedDAG.validate_schema(result.data)
 
+    def test_serialized_dag_is_updated_only_if_dag_is_changed(self):
+        """Test Serialized DAG is updated if DAG is changed"""
+
+        example_dags = make_example_dags(example_dags_module)
+        example_bash_op_dag = example_dags.get("example_bash_operator")
+        SDM.write_dag(dag=example_bash_op_dag)
+
+        with db.create_session() as session:
+            s_dag = session.query(SDM).get(example_bash_op_dag.dag_id)
+
+            # Test that if DAG is not changed, Serialized DAG is not re-written and last_updated
+            # column is not updated
+            SDM.write_dag(dag=example_bash_op_dag)
+            s_dag_1 = session.query(SDM).get(example_bash_op_dag.dag_id)
+
+            self.assertEqual(s_dag_1.dag_hash, s_dag.dag_hash)
+            self.assertEqual(s_dag.last_updated, s_dag_1.last_updated)
+
+            # Update DAG
+            example_bash_op_dag.tags += ["new_tag"]
+            six.assertCountEqual(self, example_bash_op_dag.tags, ["example", "new_tag"])
+
+            SDM.write_dag(dag=example_bash_op_dag)
+            s_dag_2 = session.query(SDM).get(example_bash_op_dag.dag_id)
+
+            self.assertNotEqual(s_dag.last_updated, s_dag_2.last_updated)
+            self.assertNotEqual(s_dag.dag_hash, s_dag_2.dag_hash)
+            self.assertEqual(s_dag_2.data["dag"]["tags"], ["example", "new_tag"])
+
     def test_read_dags(self):
         """DAGs can be read from database."""
         example_dags = self._write_example_dags()
@@ -84,7 +116,7 @@ class SerializedDagModelTest(unittest.TestCase):
             self.assertTrue(serialized_dag.dag_id == dag.dag_id)
             self.assertTrue(set(serialized_dag.task_dict) == set(dag.task_dict))
 
-    def test_remove_dags(self):
+    def test_remove_dags_by_id(self):
         """DAGs can be removed from database."""
         example_dags_list = list(self._write_example_dags().values())
         # Remove SubDags from the list as they are not stored in DB in a separate row
@@ -95,9 +127,16 @@ class SerializedDagModelTest(unittest.TestCase):
         SDM.remove_dag(dag_removed_by_id.dag_id)
         self.assertFalse(SDM.has_dag(dag_removed_by_id.dag_id))
 
+    def test_remove_dags_by_filepath(self):
+        """DAGs can be removed from database."""
+        example_dags_list = list(self._write_example_dags().values())
+        # Remove SubDags from the list as they are not stored in DB in a separate row
+        # and are directly added in Json blob of the main DAG
+        filtered_example_dags_list = [dag for dag in example_dags_list if not dag.is_subdag]
         # Tests removing by file path.
-        dag_removed_by_file = filtered_example_dags_list[1]
-        example_dag_files = [dag.full_filepath for dag in filtered_example_dags_list]
+        dag_removed_by_file = filtered_example_dags_list[0]
+        # remove repeated files for those DAGs that define multiple dags in the same file (set comprehension)
+        example_dag_files = list({dag.full_filepath for dag in filtered_example_dags_list})
         example_dag_files.remove(dag_removed_by_file.full_filepath)
         SDM.remove_deleted_dags(example_dag_files)
         self.assertFalse(SDM.has_dag(dag_removed_by_file.dag_id))

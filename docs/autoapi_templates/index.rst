@@ -18,6 +18,8 @@
 Python API Reference
 ====================
 
+.. _pythonapi:operators:
+
 Operators
 ---------
 Operators allow for generation of certain types of tasks that become nodes in
@@ -67,6 +69,8 @@ All operators are in the following packages:
   airflow/contrib/sensors/index
 
 
+.. _pythonapi:hooks:
+
 Hooks
 -----
 Hooks are interfaces to external platforms and databases, implementing a common
@@ -103,9 +107,6 @@ All executors are in the following packages:
 
   airflow/executors/index
 
-  airflow/contrib/executors/index
-
-
 Models
 ------
 Models are built on top of the SQLAlchemy ORM Base class, and instances are
@@ -118,6 +119,17 @@ persisted in the database.
 
   airflow/models/index
 
+.. _pythonapi:exceptions:
+
+Exceptions
+----------
+
+.. toctree::
+  :includehidden:
+  :glob:
+  :maxdepth: 1
+
+  airflow/exceptions/index
 
 Core and community package
 --------------------------
@@ -127,3 +139,17 @@ was passed to the Apache community and currently the entire code is
 maintained by the community, so now the division has no justification,
 and it is only due to historical reasons. Currently, all new classes are
 added only to the contrib package.
+
+Secrets Backends
+----------------
+Airflow relies on secrets backends to retrieve :class:`~airflow.models.connection.Connection` objects.
+All secrets backends derive from :class:`~airflow.secrets.BaseSecretsBackend`.
+
+.. toctree::
+  :includehidden:
+  :glob:
+  :maxdepth: 1
+
+  airflow/secrets/index
+
+  airflow/contrib/secrets/index

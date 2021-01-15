@@ -18,6 +18,7 @@
 # under the License.
 
 import json
+import logging
 import pickle
 
 from sqlalchemy import Column, Integer, String, Index, LargeBinary, and_
@@ -31,6 +32,7 @@ from airflow.utils.helpers import as_tuple
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.sqlalchemy import UtcDateTime
 
+log = logging.getLogger(__name__)
 
 # MAX XCOM Size is 48KB
 # https://github.com/apache/airflow/pull/1618#discussion_r68249677
@@ -38,7 +40,7 @@ MAX_XCOM_SIZE = 49344
 XCOM_RETURN_KEY = 'return_value'
 
 
-class XCom(Base, LoggingMixin):
+class BaseXCom(Base, LoggingMixin):
     """
     Base class for XCom objects.
     """
@@ -162,7 +164,6 @@ class XCom(Base, LoggingMixin):
                 try:
                     return json.loads(result.value.decode('UTF-8'))
                 except ValueError:
-                    log = LoggingMixin().log
                     log.error("Could not deserialize the XCOM value from JSON. "
                               "If you are using pickles instead of JSON "
                               "for XCOM, then you need to enable pickle "
@@ -226,9 +227,25 @@ class XCom(Base, LoggingMixin):
         try:
             return json.dumps(value).encode('UTF-8')
         except ValueError:
-            log = LoggingMixin().log
             log.error("Could not serialize the XCOM value into JSON. "
                       "If you are using pickles instead of JSON "
                       "for XCOM, then you need to enable pickle "
                       "support for XCOM in your airflow config.")
             raise
+
+
+def resolve_xcom_backend():
+    """Resolves custom XCom class"""
+    clazz = conf.getimport("core", "xcom_backend", fallback="airflow.models.xcom.{}"
+                           .format(BaseXCom.__name__))
+    if clazz:
+        if not issubclass(clazz, BaseXCom):
+            raise TypeError(
+                "Your custom XCom class `{class_name}` is not a subclass of `{base_name}`."
+                .format(class_name=clazz.__name__, base_name=BaseXCom.__name__)
+            )
+        return clazz
+    return BaseXCom
+
+
+XCom = resolve_xcom_backend()

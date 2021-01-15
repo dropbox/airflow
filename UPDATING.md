@@ -25,6 +25,11 @@ assists users migrating to a new version.
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of contents**
 
+- [Airflow 1.10.12](#airflow-11012)
+- [Airflow 1.10.11](#airflow-11011)
+- [Airflow 1.10.10](#airflow-11010)
+- [Airflow 1.10.9](#airflow-1109)
+- [Airflow 1.10.8](#airflow-1108)
 - [Airflow 1.10.7](#airflow-1107)
 - [Airflow 1.10.6](#airflow-1106)
 - [Airflow 1.10.5](#airflow-1105)
@@ -39,6 +44,114 @@ assists users migrating to a new version.
 - [Airflow 1.7.1.2](#airflow-1712)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+<!--
+
+I'm glad you want to write a new note. Remember that this note is intended for users.
+Make sure it contains the following information:
+
+- [ ] Previous behaviors
+- [ ] New behaviors
+- [ ] If possible, a simple example of how to migrate. This may include a simple code example.
+- [ ] If possible, the benefit for the user after migration e.g. "we want to make these changes to unify class names."
+- [ ] If possible, the reason for the change, which adds more context to that interested, e.g. reference for Airflow Improvement Proposal.
+
+More tips can be found in the guide:
+https://developers.google.com/style/inclusive-documentation
+
+-->
+## Airflow 1.10.12
+
+### Clearing tasks skipped by SkipMixin will skip them
+
+Previously, when tasks skipped by SkipMixin (such as BranchPythonOperator, BaseBranchOperator and ShortCircuitOperator) are cleared, they execute. Since 1.10.12, when such skipped tasks are cleared,
+they will be skipped again by the newly introduced NotPreviouslySkippedDep.
+
+### The pod_mutation_hook function will now accept a kubernetes V1Pod object
+
+As of airflow 1.10.12, using the `airflow.contrib.kubernetes.Pod` class in the `pod_mutation_hook` is now deprecated. Instead we recommend that users
+treat the `pod` parameter as a `kubernetes.client.models.V1Pod` object. This means that users now have access to the full Kubernetes API
+when modifying airflow pods
+
+### pod_template_file option now available in the KubernetesPodOperator
+
+Users can now offer a path to a yaml for the KubernetesPodOperator using the `pod_template_file` parameter.
+
+## Airflow 1.10.11
+
+### Use NULL as default value for dag.description
+
+Now use NULL as default value for dag.description in dag table
+
+### Restrict editing DagRun State in the old UI (Flask-admin based UI)
+
+Before 1.10.11 it was possible to edit DagRun State in the `/admin/dagrun/` page
+ to any text.
+
+In Airflow 1.10.11+, the user can only choose the states from the list.
+
+### Experimental API will deny all request by default.
+
+The previous default setting was to allow all API requests without authentication, but this poses security
+risks to users who miss this fact. This changes the default for new installs to deny all requests by default.
+
+**Note**: This will not change the behavior for existing installs, please update check your airflow.cfg
+
+If you wish to have the experimental API work, and aware of the risks of enabling this without authentication
+(or if you have your own authentication layer in front of Airflow) you can get
+the previous behaviour on a new install by setting this in your airflow.cfg:
+
+```
+[api]
+auth_backend = airflow.api.auth.backend.default
+```
+
+### XCom Values can no longer be added or changed from the Webserver
+
+Since XCom values can contain pickled data, we would no longer allow adding or
+changing XCom values from the UI.
+
+
+## Airflow 1.10.10
+
+### Setting Empty string to a Airflow Variable will return an empty string
+
+Previously when you set an Airflow Variable with an empty string (`''`), the value you used to get
+back was ``None``. This will now return an empty string (`'''`)
+
+Example:
+
+```python
+>> Variable.set('test_key', '')
+>> Variable.get('test_key')
+```
+
+The above code returned `None` previously, now it will return `''`.
+
+### Make behavior of `none_failed` trigger rule consistent with documentation
+The behavior of the `none_failed` trigger rule is documented as "all parents have not failed (`failed` or
+    `upstream_failed`) i.e. all parents have succeeded or been skipped." As previously implemented, the actual behavior
+    would skip if all parents of a task had also skipped.
+
+### Add new trigger rule `none_failed_or_skipped`
+The fix to `none_failed` trigger rule breaks workflows that depend on the previous behavior.
+    If you need the old behavior, you should change the tasks with `none_failed` trigger rule to `none_failed_or_skipped`.
+
+### Success Callback will be called when a task in marked as success from UI
+
+When a task is marked as success by a user from Airflow UI - `on_success_callback` will be called
+
+## Airflow 1.10.9
+
+No breaking changes.
+
+## Airflow 1.10.8
+
+### Failure callback will be called when task is marked failed
+When task is marked failed by user or task fails due to system failures - on failure call back will be called as part of clean up
+
+See [AIRFLOW-5621](https://jira.apache.org/jira/browse/AIRFLOW-5621) for details
+
 
 ## Airflow 1.10.7
 
@@ -56,12 +169,27 @@ Pool size can now be set to -1 to indicate infinite size (it also includes
 optimisation of pool query which lead to poor task n^2 performance of task
 pool queries in MySQL).
 
+### Viewer won't have edit permissions on DAG view.
+
 ### Google Cloud Storage Hook
 
 The `GoogleCloudStorageDownloadOperator` can either write to a supplied `filename` or
 return the content of a file via xcom through `store_to_xcom_key` - both options are mutually exclusive.
 
 ## Airflow 1.10.6
+
+### BaseOperator::render_template function signature changed
+
+Previous versions of the `BaseOperator::render_template` function required an `attr` argument as the first
+positional argument, along with `content` and `context`. This function signature was changed in 1.10.6 and
+the `attr` argument is no longer required (or accepted).
+
+In order to use this function in subclasses of the `BaseOperator`, the `attr` argument must be removed:
+```python
+result = self.render_template('myattr', self.myattr, context)  # Pre-1.10.6 call
+...
+result = self.render_template(self.myattr, context)  # Post-1.10.6 call
+```
 
 ### Changes to `aws_default` Connection's default region
 
@@ -87,6 +215,14 @@ The following metrics are deprecated and won't be emitted in Airflow 2.0:
 No breaking changes.
 
 ## Airflow 1.10.4
+
+### Export MySQL timestamps as UTC
+
+`MySqlToGoogleCloudStorageOperator` now exports TIMESTAMP columns as UTC
+by default, rather than using the default timezone of the MySQL server.
+This is the correct behavior for use with BigQuery, since BigQuery
+assumes that TIMESTAMP columns without time zones are in UTC. To
+preserve the previous behavior, set `ensure_utc` to `False.`
 
 ### Python 2 support is going away
 
@@ -182,6 +318,12 @@ dag.get_task_instances(session=your_session)
 
 ## Airflow 1.10.3
 
+### New `dag_discovery_safe_mode` config option
+
+If `dag_discovery_safe_mode` is enabled, only check files for DAGs if
+they contain the strings "airflow" and "DAG". For backwards
+compatibility, this option is enabled by default.
+
 ### RedisPy dependency updated to v3 series
 If you are using the Redis Sensor or Hook you may have to update your code. See
 [redis-py porting instructions] to check if your code might be affected (MSET,
@@ -214,12 +356,6 @@ If the `AIRFLOW_CONFIG` environment variable was not set and the
 `~/airflow/airflow.cfg` instead of `$AIRFLOW_HOME/airflow.cfg`. Now airflow
 will discover its config file using the `$AIRFLOW_CONFIG` and `$AIRFLOW_HOME`
 environment variables rather than checking for the presence of a file.
-
-### New `dag_discovery_safe_mode` config option
-
-If `dag_discovery_safe_mode` is enabled, only check files for DAGs if
-they contain the strings "airflow" and "DAG". For backwards
-compatibility, this option is enabled by default.
 
 ### Changes in Google Cloud Platform related operators
 
@@ -364,6 +500,11 @@ generates has been fixed.
 
 ## Airflow 1.10.2
 
+### New `dag_processor_manager_log_location` config option
+
+The DAG parsing manager log now by default will be log into a file, where its location is
+controlled by the new `dag_processor_manager_log_location` config option in core section.
+
 ### DAG level Access Control for new RBAC UI
 
 Extend and enhance new Airflow RBAC UI to support DAG level ACL. Each dag now has two permissions(one for write, one for read) associated('can_dag_edit', 'can_dag_read').
@@ -443,10 +584,10 @@ or enabled autodetect of schema:
 
 ## Airflow 1.10.1
 
-### New `dag_processor_manager_log_location` config option
+### min_file_parsing_loop_time config option temporarily disabled
 
-The DAG parsing manager log now by default will be log into a file, where its location is
-controlled by the new `dag_processor_manager_log_location` config option in core section.
+The scheduler.min_file_parsing_loop_time config option has been temporarily removed due to
+some bugs.
 
 ### StatsD Metrics
 
@@ -473,22 +614,6 @@ If you want to use LDAP auth backend without TLS then you will have to create a
 custom-auth backend based on
 https://github.com/apache/airflow/blob/1.10.0/airflow/contrib/auth/backends/ldap_auth.py
 
-### Custom auth backends interface change
-
-We have updated the version of flask-login we depend upon, and as a result any
-custom auth backends might need a small change: `is_active`,
-`is_authenticated`, and `is_anonymous` should now be properties. What this means is if
-previously you had this in your user class
-
-    def is_active(self):
-      return self.active
-
-then you need to change it like this
-
-    @property
-    def is_active(self):
-      return self.active
-
 ## Airflow 1.10
 
 Installation and upgrading requires setting `SLUGIFY_USES_TEXT_UNIDECODE=yes` in your environment or
@@ -498,14 +623,6 @@ dependency (python-nvd3 -> python-slugify -> unidecode).
 ### Replace DataProcHook.await calls to DataProcHook.wait
 
 The method name was changed to be compatible with the Python 3.7 async/await keywords
-
-### DAG level Access Control for new RBAC UI
-
-Extend and enhance new Airflow RBAC UI to support DAG level ACL. Each dag now has two permissions(one for write, one for read) associated('can_dag_edit', 'can_dag_read').
-The admin will create new role, associate the dag permission with the target dag and assign that role to users. That user can only access / view the certain dags on the UI
-that he has permissions on. If a new role wants to access all the dags, the admin could associate dag permissions on an artificial view(``all_dags``) with that role.
-
-We also provide a new cli command(``sync_perm``) to allow admin to auto sync permissions.
 
 ### Setting UTF-8 as default mime_charset in email utils
 
@@ -942,14 +1059,11 @@ dags_are_paused_at_creation = False
 
 If you specify a hive conf to the run_cli command of the HiveHook, Airflow add some
 convenience variables to the config. In case you run a secure Hadoop setup it might be
-required to whitelist these variables by adding the following to your configuration:
+required to allow these variables by adjusting you hive configuration to add `airflow\.ctx\..*` to the regex
+of user-editable configuration properties. See
+[the Hive docs on Configuration Properties][hive.security.authorization.sqlstd] for more info.
 
-```
-<property>
-     <name>hive.security.authorization.sqlstd.confwhitelist.append</name>
-     <value>airflow\.ctx\..*</value>
-</property>
-```
+[hive.security.authorization.sqlstd]: https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=82903061#ConfigurationProperties-SQLStandardBasedAuthorization.1
 
 ### Google Cloud Operator and Hook alignment
 

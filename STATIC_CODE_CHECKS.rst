@@ -76,6 +76,8 @@ require Breeze Docker images to be installed locally:
 ----------------------------------- ---------------------------------------------------------------- ------------
 ``isort``                             Sorts imports in python files.
 ----------------------------------- ---------------------------------------------------------------- ------------
+``language-matters``                  Check for language that we do not accept as community
+----------------------------------- ---------------------------------------------------------------- ------------
 ``lint-dockerfile``                   Lints a dockerfile.
 ----------------------------------- ---------------------------------------------------------------- ------------
 ``mixed-line-ending``                 Detects if mixed line ending is used (\r vs. \r\n).
@@ -127,9 +129,9 @@ them with ``sudo apt install``, on macOS - with ``brew install``.
 
 The current list of prerequisites is limited to ``xmllint``:
 
-- on Linux, install via ``sudo apt install xmllint``;
+- on Linux, install via ``sudo apt install libxml2-utils``;
 
-- on macOS, install via ``brew install xmllint``.
+- on macOS, install via ``brew install libxml2``.
 
 Enabling Pre-commit Hooks
 .........................
@@ -207,9 +209,8 @@ Running Static Code Checks via Breeze
 
 The static code checks can be launched using the Breeze environment.
 
-You run the static code checks via ``-S``, ``--static-check`` flags or ``-F``,
-``--static-check-all-files``. The former ones run appropriate
-checks only for files changed and staged locally, the latter ones
+You run the static code checks via ``./breeze static-check`` or ``./breeze static-check-all-files`` commands.
+The former ones run appropriate checks only for files changed and staged locally, the latter ones
 run checks on all files.
 
 You can see the list of available static checks either via ``--help`` flag or by using the autocomplete
@@ -219,37 +220,37 @@ Run the ``mypy`` check for the currently staged changes:
 
 .. code-block:: bash
 
-     ./breeze  --static-check mypy
+     ./breeze static-check mypy
 
 Run the ``mypy`` check for all files:
 
 .. code-block:: bash
 
-     ./breeze --static-check-all-files mypy
+     ./breeze static-check-all-files mypy
 
 Run the ``flake8`` check for the ``tests.core.py`` file with verbose output:
 
 .. code-block:: bash
 
-     ./breeze  --static-check flake8 -- --files tests/core.py --verbose
+     ./breeze static-check flake8 -- --files tests/core.py --verbose
 
 Run the ``flake8`` check for the ``tests.core`` package with verbose output:
 
 .. code-block:: bash
 
-     ./breeze  --static-check mypy -- --files tests/hooks/test_druid_hook.py
+     ./breeze static-check mypy -- --files tests/hooks/test_druid_hook.py
 
 Run all tests for the currently staged files:
 
 .. code-block:: bash
 
-     ./breeze  --static-check all
+     ./breeze static-check all
 
 Run all tests for all files:
 
 .. code-block:: bash
 
-     ./breeze  --static-check-all-files all
+     ./breeze static-check-all-files all
 
 
 The ``license`` check is run via the same Docker image containing the
@@ -258,19 +259,18 @@ It does not take pre-commit parameters as extra arguments.
 
 .. code-block:: bash
 
-     ./breeze --static-check-all-files licenses
+     ./breeze static-check-all-files licenses
 
 Running Static Code Checks via Scripts from the Host
 ....................................................
 
 You can trigger the static checks from the host environment, without entering the Docker container. To do
-this, run the following scripts (the same is done in Travis CI):
+this, run the following scripts:
 
-* `<scripts/ci/ci_check_license.sh>`_ - checks the licenses.
-* `<scripts/ci/ci_docs.sh>`_ - checks that documentation can be built without warnings.
-* `<scripts/ci/ci_flake8.sh>`_ - runs Flake8 source code style enforcement tool.
-* `<scripts/ci/ci_lint_dockerfile.sh>`_ - runs lint checker for the Dockerfile.
-* `<scripts/ci/ci_mypy.sh>`_ - runs a check for mypy type annotation consistency.
+* `<scripts/ci/static_checks/ci_check_license.sh>`_ - checks the licenses.
+* `<scripts/ci/static_checks/ci_flake8.sh>`_ - runs Flake8 source code style enforcement tool.
+* `<scripts/ci/static_checks/ci_lint_dockerfile.sh>`_ - runs lint checker for the dockerfiles.
+* `<scripts/ci/static_checks/ci_mypy.sh>`_ - runs a check for mypy type annotation consistency.
 
 The scripts may ask you to rebuild the images, if needed.
 
@@ -313,8 +313,8 @@ On the host:
 
 .. code-block::
 
-  ./scripts/ci/ci_mypy.sh ./airflow/example_dags/
+  ./scripts/ci/static_checks/ci_mypy.sh ./airflow/example_dags/
 
 .. code-block::
 
-  ./scripts/ci/ci_mypy.sh ./airflow/example_dags/test_utils.py
+  ./scripts/ci/static_checks/ci_mypy.sh ./airflow/example_dags/test_utils.py

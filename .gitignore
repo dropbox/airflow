@@ -10,6 +10,7 @@ secrets.py
 airflow.db
 unittests.db
 
+
 # Airflow temporary artifacts
 airflow/git_version
 airflow/www/static/coverage/
@@ -106,6 +107,7 @@ celerybeat-schedule
 
 # dotenv
 .env
+.autoenv*.zsh
 
 # virtualenv
 .venv*
@@ -128,6 +130,16 @@ ENV/
 # vim
 *.swp
 
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
 # OSX
 .DS_Store
 
@@ -137,8 +149,6 @@ ENV/
 # Spark
 rat-results.txt
 
-# Git stuff
-.gitattributes
 # Kubernetes generated templated files
 *.generated
 *.tar.gz
@@ -164,7 +174,7 @@ airflow-*.pid
 .dmypy.json
 dmypy.json
 
-# Needed for CI Dockerfile build system
+# Needed for CI Dockerfile.ci build system
 .build
 /tmp
 /files
@@ -172,5 +182,11 @@ dmypy.json
 /hive_scratch_dir/
 /.bash_aliases
 /.bash_history
+/.kube
 /.inputrc
 log.txt*
+
+Chart.lock
+
+# Chart dependencies
+**/charts/*.tgz

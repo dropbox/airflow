@@ -23,12 +23,13 @@ from sqlalchemy import (
     Column, Integer, String, Boolean, PickleType, Index, UniqueConstraint, func, DateTime, or_,
     and_
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.orm import synonym
 from sqlalchemy.orm.session import Session
 from airflow.exceptions import AirflowException
-from airflow.models.base import Base, ID_LEN
-from airflow.settings import Stats
+from airflow.models.base import ID_LEN, Base
+from airflow.settings import Stats, task_instance_mutation_hook
 from airflow.ti_deps.dep_context import DepContext
 from airflow.utils import timezone
 from airflow.utils.db import provide_session
@@ -300,7 +301,8 @@ class DagRun(Base, LoggingMixin):
         duration = (timezone.utcnow() - start_dttm).total_seconds() * 1000
         Stats.timing("dagrun.dependency-check.{}".format(self.dag_id), duration)
 
-        leaf_tis = [ti for ti in tis if ti.task_id in {t.task_id for t in dag.leaves}]
+        leaf_task_ids = {t.task_id for t in dag.leaves}
+        leaf_tis = [ti for ti in tis if ti.task_id in leaf_task_ids]
 
         # if all roots finished and at least one failed, the run failed
         if not unfinished_tasks and any(
@@ -361,9 +363,10 @@ class DagRun(Base, LoggingMixin):
         tis = self.get_task_instances(session=session)
 
         # check for removed or restored tasks
-        task_ids = []
+        task_ids = set()
         for ti in tis:
-            task_ids.append(ti.task_id)
+            task_instance_mutation_hook(ti)
+            task_ids.add(ti.task_id)
             task = None
             try:
                 task = dag.get_task(ti.task_id)
@@ -384,6 +387,7 @@ class DagRun(Base, LoggingMixin):
                               "removed from DAG '{}'".format(ti, dag))
                 Stats.incr("task_restored_to_dag.{}".format(dag.dag_id), 1, 1)
                 ti.state = State.NONE
+            session.merge(ti)
 
         # check for missing tasks
         for task in six.itervalues(dag.task_dict):
@@ -395,9 +399,19 @@ class DagRun(Base, LoggingMixin):
                     "task_instance_created-{}".format(task.__class__.__name__),
                     1, 1)
                 ti = TaskInstance(task, self.execution_date)
+                task_instance_mutation_hook(ti)
                 session.add(ti)
 
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError as err:
+            self.log.info(str(err))
+            self.log.info(
+                'Hit IntegrityError while creating the TIs for %s - %s',
+                dag.dag_id, self.execution_date
+            )
+            self.log.info('Doing session rollback.')
+            session.rollback()
 
     @staticmethod
     def get_run(session, dag_id, execution_date):

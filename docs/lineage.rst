@@ -28,19 +28,20 @@ audit trails and data governance, but also debugging of data flows.
 Airflow tracks data by means of inlets and outlets of the tasks. Let's work from an example and see how it
 works.
 
-.. code:: python
+.. code-block:: python
 
     from airflow.operators.bash_operator import BashOperator
     from airflow.operators.dummy_operator import DummyOperator
     from airflow.lineage.datasets import File
     from airflow.models import DAG
+    from airflow.utils.dates import days_ago
     from datetime import timedelta
 
     FILE_CATEGORIES = ["CAT1", "CAT2", "CAT3"]
 
     args = {
         'owner': 'Airflow',
-        'start_date': airflow.utils.dates.days_ago(2)
+        'start_date': days_ago(2)
     }
 
     dag = DAG(
@@ -98,7 +99,7 @@ Apache Atlas
 Airflow can send its lineage metadata to Apache Atlas. You need to enable the ``atlas`` backend and configure it
 properly, e.g. in your ``airflow.cfg``:
 
-.. code:: ini
+.. code-block:: ini
 
     [lineage]
     backend = airflow.lineage.backend.atlas.AtlasBackend

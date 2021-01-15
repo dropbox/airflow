@@ -34,6 +34,7 @@ This DAG relies on the following OS environment variables
 import os
 
 # [START howto_operator_vision_retry_import]
+from airflow.utils.dates import days_ago
 from google.api_core.retry import Retry
 # [END howto_operator_vision_retry_import]
 # [START howto_operator_vision_product_set_import]
@@ -49,7 +50,6 @@ from google.cloud.vision_v1.types import ReferenceImage
 from google.cloud.vision import enums
 # [END howto_operator_vision_enums_import]
 
-import airflow
 from airflow import models
 from airflow.operators.bash_operator import BashOperator
 
@@ -72,7 +72,7 @@ from airflow.contrib.operators.gcp_vision_operator import (
     CloudVisionDetectImageSafeSearchOperator,
 )
 
-default_args = {'start_date': airflow.utils.dates.days_ago(1)}
+default_args = {'start_date': days_ago(1)}
 
 # [START howto_operator_vision_args_common]
 GCP_VISION_LOCATION = os.environ.get('GCP_VISION_LOCATION', 'europe-west1')
@@ -110,7 +110,7 @@ reference_image = ReferenceImage(uri=GCP_VISION_REFERENCE_IMAGE_URL)
 # [START howto_operator_vision_annotate_image_request]
 annotate_image_request = {
     'image': {'source': {'image_uri': GCP_VISION_ANNOTATE_IMAGE_URL}},
-    'features': [{'type': enums.Feature.Type.LOGO_DETECTION}],
+    'features': [{'type': enums.Feature.Type.LOGO_DETECTION.value}],
 }
 # [END howto_operator_vision_annotate_image_request]
 
