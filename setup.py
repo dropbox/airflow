@@ -629,8 +629,9 @@ def do_setup():
         scripts=['airflow/bin/airflow'],
         install_requires=INSTALL_REQUIREMENTS,
         setup_requires=[
-            'bowler',
-            'docutils>=0.14, <0.16'
+            # Exclude bowler as it is incompatible with python 2.
+            # 'bowler',
+            'docutils>=0.14, <0.16',
             'gitpython>=2.0.2',
             'setuptools',
             'wheel',
