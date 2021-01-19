@@ -18,7 +18,7 @@
 ################################
 ## Airflow Worker KEDA Scaler
 #################################
-{{- if (and .Values.workers.keda.enabled (eq .Values.executor "CeleryExecutor")) }}
+{{- if (and .Values.workers.keda.enabled ( or (eq .Values.executor "CeleryExecutor"))  (eq .Values.executor "CeleryKubernetesExecutor")) }}
 apiVersion: keda.k8s.io/v1alpha1
 kind: ScaledObject
 metadata:
@@ -42,6 +42,7 @@ spec:
   triggers:
     - type: postgresql
       metadata:
+        targetQueryValue: "1"
         connection: AIRFLOW_CONN_AIRFLOW_DB
         query: "SELECT ceil(COUNT(*)::decimal / 16) FROM task_instance WHERE state='running' OR state='queued'"
 {{- end }}

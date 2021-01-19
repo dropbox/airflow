@@ -741,7 +741,7 @@
       version_added: ~
       type: string
       example: ~
-      default: "temporary_key"
+      default: "{SECRET_KEY}"
     - name: workers
       description: |
         Number of workers to run the Gunicorn web server
@@ -1001,21 +1001,14 @@
       type: string
       example: ~
       default: "True"
-    - name: force_log_out_after
+    - name: session_lifetime_minutes
       description: |
-        Minutes of non-activity before logged out from UI
-        0 means never get forcibly logged out
-      version_added: 1.10.8
-      type: string
+        The UI cookie lifetime in minutes. User will be logged out from UI after
+        ``session_lifetime_minutes`` of non-activity
+      version_added: 1.10.13
+      type: int
       example: ~
-      default: "0"
-    - name: session_lifetime_days
-      description: |
-        The UI cookie lifetime in days
-      version_added: 1.10.8
-      type: string
-      example: ~
-      default: "30"
+      default: "43200"
 
 - name: email
   description: ~
@@ -1446,10 +1439,10 @@
       type: string
       example: ~
       default: ""
-    - name: max_threads
+    - name: parsing_processes
       description: |
-        The scheduler can run multiple threads in parallel to schedule dags.
-        This defines how many threads will run.
+        The scheduler can run multiple processes in parallel to parse dags.
+        This defines how many processes will run.
       version_added: ~
       type: string
       example: ~

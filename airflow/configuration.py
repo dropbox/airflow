@@ -22,6 +22,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+from base64 import b64encode
 from builtins import str
 from collections import OrderedDict
 import copy
@@ -183,6 +184,9 @@ class AirflowConfigParser(ConfigParser):
             'json_format': 'elasticsearch_json_format',
             'json_fields': 'elasticsearch_json_fields'
 
+        },
+        'scheduler': {
+            'parsing_processes': 'max_threads'
         }
     }
 
@@ -702,6 +706,8 @@ if not os.path.isfile(TEST_CONFIG_FILE) or not os.path.isfile(AIRFLOW_CONFIG):
     FERNET_KEY = generate_fernet_key()
 else:
     FERNET_KEY = ''
+
+SECRET_KEY = b64encode(os.urandom(16)).decode('utf-8')
 
 TEMPLATE_START = (
     '# ----------------------- TEMPLATE BEGINS HERE -----------------------')

@@ -320,6 +320,13 @@ To use kerberos authentication, you must install Airflow with the ``kerberos`` e
 
    pip install 'apache-airflow[kerberos]'
 
+.. note::
+   On November 2020, new version of PIP (20.3) has been released with a new, 2020 resolver. This resolver
+   does not yet work with Apache Airflow and might leads to errors in installation - depends on your choice
+   of extras. In order to install Airflow you need to either downgrade pip to version 20.2.4
+   ``pip upgrade --pip==20.2.4`` or, in case you use Pip 20.3, you need to add option
+   ``--use-deprecated legacy-resolver`` to your pip install command.
+
 OAuth Authentication
 --------------------
 
@@ -359,6 +366,14 @@ To use GHE authentication, you must install Airflow with the ``github_enterprise
 
    pip install 'apache-airflow[github_enterprise]'
 
+.. note::
+   On November 2020, new version of PIP (20.3) has been released with a new, 2020 resolver. This resolver
+   does not yet work with Apache Airflow and might leads to errors in installation - depends on your choice
+   of extras. In order to install Airflow you need to either downgrade pip to version 20.2.4
+   ``pip upgrade --pip==20.2.4`` or, in case you use Pip 20.3, you need to add option
+   ``--use-deprecated legacy-resolver`` to your pip install command.
+
+
 Setting up GHE Authentication
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -387,7 +402,13 @@ Google Authentication
 
 The Google authentication backend can be used to authenticate users
 against Google using OAuth2. You must specify the domains to restrict
-login, separated with a comma, to only members of those domains.
+login, separated with a comma, to only members of those domains. You
+also need to select an option for `user consent prompt behaviour <https://developers.google.com/identity/protocols/oauth2/web-server#userconsentprompt>`_, one of:
+
+consent: Prompt the user for consent.
+select_account: Prompt the user to select an account.
+none: Do not display any authentication or consent screens.
+'': the user will be prompted only the first time your project requests access
 
 .. code-block:: ini
 
@@ -400,12 +421,21 @@ login, separated with a comma, to only members of those domains.
     client_secret = google_client_secret
     oauth_callback_route = /oauth2callback
     domain = example1.com,example2.com
+    prompt = <One of : consent, select_account, none or ''>
 
 To use Google authentication, you must install Airflow with the ``google_auth`` extras group:
 
 .. code-block:: bash
 
    pip install 'apache-airflow[google_auth]'
+
+.. note::
+   On November 2020, new version of PIP (20.3) has been released with a new, 2020 resolver. This resolver
+   does not yet work with Apache Airflow and might leads to errors in installation - depends on your choice
+   of extras. In order to install Airflow you need to either downgrade pip to version 20.2.4
+   ``pip upgrade --pip==20.2.4`` or, in case you use Pip 20.3, you need to add option
+   ``--use-deprecated legacy-resolver`` to your pip install command.
+
 
 Setting up Google Authentication
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

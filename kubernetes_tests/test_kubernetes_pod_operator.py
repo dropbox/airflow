@@ -17,9 +17,12 @@
 # under the License.
 
 import json
+import logging
 import os
 import shutil
+import sys
 import unittest
+import textwrap
 
 import kubernetes.client.models as k8s
 import pendulum
@@ -57,8 +60,16 @@ def create_context(task):
     }
 
 
+def get_kubeconfig_path():
+    kubeconfig_path = os.environ.get('KUBECONFIG')
+    return kubeconfig_path if kubeconfig_path else os.path.expanduser('~/.kube/config')
+
+
 # noinspection DuplicatedCode,PyUnusedLocal
 class TestKubernetesPodOperatorSystem(unittest.TestCase):
+    def get_current_task_name(self):
+        # reverse test name to make pod name unique (it has limited length)
+        return "_" + unittest.TestCase.id(self).replace(".", "_")[::-1]
 
     def setUp(self):
         self.maxDiff = None  # pylint: disable=invalid-name
@@ -122,7 +133,7 @@ class TestKubernetesPodOperatorSystem(unittest.TestCase):
 
     def test_do_xcom_push_defaults_false(self):
         new_config_path = '/tmp/kube_config'
-        old_config_path = os.path.expanduser('~/.kube/config')
+        old_config_path = get_kubeconfig_path()
         shutil.copy(old_config_path, new_config_path)
 
         k = KubernetesPodOperator(
@@ -141,7 +152,7 @@ class TestKubernetesPodOperatorSystem(unittest.TestCase):
 
     def test_config_path_move(self):
         new_config_path = '/tmp/kube_config'
-        old_config_path = os.path.expanduser('~/.kube/config')
+        old_config_path = get_kubeconfig_path()
         shutil.copy(old_config_path, new_config_path)
 
         k = KubernetesPodOperator(
@@ -816,6 +827,38 @@ class TestKubernetesPodOperatorSystem(unittest.TestCase):
         ]
         self.assertEqual(self.expected_pod, actual_pod)
 
+    def test_pod_template_file_system(self):
+        fixture = sys.path[0] + '/tests/kubernetes/basic_pod.yaml'
+        k = KubernetesPodOperator(
+            task_id="task" + self.get_current_task_name(),
+            in_cluster=False,
+            pod_template_file=fixture,
+            do_xcom_push=True
+        )
+
+        context = create_context(k)
+        result = k.execute(context)
+        self.assertIsNotNone(result)
+        self.assertDictEqual(result, {"hello": "world"})
+
+    def test_pod_template_file_with_overrides_system(self):
+        fixture = sys.path[0] + '/tests/kubernetes/basic_pod.yaml'
+        k = KubernetesPodOperator(
+            task_id="task" + self.get_current_task_name(),
+            labels={"foo": "bar", "fizz": "buzz"},
+            env_vars={"env_name": "value"},
+            in_cluster=False,
+            pod_template_file=fixture,
+            do_xcom_push=True
+        )
+
+        context = create_context(k)
+        result = k.execute(context)
+        self.assertIsNotNone(result)
+        self.assertEqual(k.pod.metadata.labels, {'fizz': 'buzz', 'foo': 'bar'})
+        self.assertEqual(k.pod.spec.containers[0].env, [k8s.V1EnvVar(name="env_name", value="value")])
+        self.assertDictEqual(result, {"hello": "world"})
+
     def test_init_container(self):
         # GIVEN
         volume_mounts = [k8s.V1VolumeMount(
@@ -899,48 +942,72 @@ class TestKubernetesPodOperatorSystem(unittest.TestCase):
     @mock.patch("airflow.kubernetes.kube_client.get_kube_client")
     def test_pod_template_file(self, mock_client, monitor_mock, start_mock):
         from airflow.utils.state import State
+        fixture = sys.path[0] + '/tests/kubernetes/pod.yaml'
         k = KubernetesPodOperator(
             task_id='task',
-            pod_template_file='tests/kubernetes/pod.yaml',
+            pod_template_file=fixture,
             do_xcom_push=True
         )
         monitor_mock.return_value = (State.SUCCESS, None)
-        context = self.create_context(k)
-        k.execute(context)
+        context = create_context(k)
+        with self.assertLogs(k.log, level=logging.DEBUG) as cm:
+            k.execute(context)
+            expected_line = textwrap.dedent("""\
+            DEBUG:airflow.task.operators:Starting pod:
+            api_version: v1
+            kind: Pod
+            metadata:
+              annotations: {}
+              cluster_name: null
+              creation_timestamp: null
+              deletion_grace_period_seconds: null\
+            """).strip()
+            self.assertTrue(any(line.startswith(expected_line) for line in cm.output))
+
         actual_pod = self.api_client.sanitize_for_serialization(k.pod)
-        self.assertEqual({
-            'apiVersion': 'v1',
-            'kind': 'Pod',
-            'metadata': {'name': mock.ANY, 'namespace': 'mem-example'},
-            'spec': {
-                'volumes': [{'name': 'xcom', 'emptyDir': {}}],
-                'containers': [{
-                    'args': ['--vm', '1', '--vm-bytes', '150M', '--vm-hang', '1'],
-                    'command': ['stress'],
-                    'image': 'polinux/stress',
-                    'name': 'memory-demo-ctr',
-                    'resources': {
-                        'limits': {'memory': '200Mi'},
-                        'requests': {'memory': '100Mi'}
-                    },
-                    'volumeMounts': [{
-                        'name': 'xcom',
-                        'mountPath': '/airflow/xcom'
-                    }]
-                }, {
-                    'name': 'airflow-xcom-sidecar',
-                    'image': "alpine",
-                    'command': ['sh', '-c', PodDefaults.XCOM_CMD],
-                    'volumeMounts': [
-                        {
-                            'name': 'xcom',
-                            'mountPath': '/airflow/xcom'
-                        }
-                    ],
-                    'resources': {'requests': {'cpu': '1m'}},
-                }],
-            }
-        }, actual_pod)
+        expected_dict = {'apiVersion': 'v1',
+                         'kind': 'Pod',
+                         'metadata': {'annotations': {},
+                                      'labels': {},
+                                      'name': 'memory-demo',
+                                      'namespace': 'mem-example'},
+                         'spec': {'affinity': {},
+                                  'containers': [{'args': ['--vm',
+                                                           '1',
+                                                           '--vm-bytes',
+                                                           '150M',
+                                                           '--vm-hang',
+                                                           '1'],
+                                                  'command': ['stress'],
+                                                  'env': [],
+                                                  'envFrom': [],
+                                                  'image': 'apache/airflow:stress-2020.07.10-1.0.4',
+                                                  'imagePullPolicy': 'IfNotPresent',
+                                                  'name': 'base',
+                                                  'ports': [],
+                                                  'resources': {'limits': {'memory': '200Mi'},
+                                                                'requests': {'memory': '100Mi'}},
+                                                  'volumeMounts': [{'mountPath': '/airflow/xcom',
+                                                                    'name': 'xcom'}]},
+                                                 {'command': ['sh',
+                                                              '-c',
+                                                              'trap "exit 0" INT; while true; do sleep '
+                                                              '30; done;'],
+                                                  'image': 'alpine',
+                                                  'name': 'airflow-xcom-sidecar',
+                                                  'resources': {'requests': {'cpu': '1m'}},
+                                                  'volumeMounts': [{'mountPath': '/airflow/xcom',
+                                                                    'name': 'xcom'}]}],
+                                  'hostNetwork': False,
+                                  'imagePullSecrets': [],
+                                  'initContainers': [],
+                                  'nodeSelector': {},
+                                  'restartPolicy': 'Never',
+                                  'securityContext': {},
+                                  'serviceAccountName': 'default',
+                                  'tolerations': [],
+                                  'volumes': [{'emptyDir': {}, 'name': 'xcom'}]}}
+        self.assertEqual(expected_dict, actual_pod)
 
     @mock.patch("airflow.kubernetes.pod_launcher.PodLauncher.start_pod")
     @mock.patch("airflow.kubernetes.pod_launcher.PodLauncher.monitor_pod")
@@ -991,5 +1058,71 @@ class TestKubernetesPodOperatorSystem(unittest.TestCase):
                 do_xcom_push=False,
             )
 
+    @mock.patch("airflow.kubernetes.pod_launcher.PodLauncher.monitor_pod")
+    def test_on_kill(self,
+                     monitor_mock):  # pylint: disable=unused-argument
+        from airflow.utils.state import State
+        client = kube_client.get_kube_client(in_cluster=False)
+        name = "test"
+        namespace = "default"
+        k = KubernetesPodOperator(
+            namespace='default',
+            image="ubuntu:16.04",
+            cmds=["bash", "-cx"],
+            arguments=["sleep 1000"],
+            labels={"foo": "bar"},
+            name="test",
+            task_id=name,
+            in_cluster=False,
+            do_xcom_push=False,
+            termination_grace_period=0,
+        )
+        context = create_context(k)
+        monitor_mock.return_value = (State.SUCCESS, None)
+        k.execute(context)
+        name = k.pod.metadata.name
+        pod = client.read_namespaced_pod(name=name, namespace=namespace)
+        self.assertEqual(pod.status.phase, "Running")
+        k.on_kill()
+        with self.assertRaises(ApiException):
+            pod = client.read_namespaced_pod(name=name, namespace=namespace)
+
+    def test_reattach_failing_pod_once(self):
+        from airflow.utils.state import State
+        client = kube_client.get_kube_client(in_cluster=False)
+        name = "test"
+        namespace = "default"
+        k = KubernetesPodOperator(
+            namespace='default',
+            image="ubuntu:16.04",
+            cmds=["bash", "-cx"],
+            arguments=["exit 1"],
+            labels={"foo": "bar"},
+            name="test",
+            task_id=name,
+            in_cluster=False,
+            do_xcom_push=False,
+            is_delete_operator_pod=False,
+            termination_grace_period=0,
+        )
+
+        context = create_context(k)
+
+        with mock.patch("airflow.kubernetes.pod_launcher.PodLauncher.monitor_pod") as monitor_mock:
+            monitor_mock.return_value = (State.SUCCESS, None)
+            k.execute(context)
+            name = k.pod.metadata.name
+            pod = client.read_namespaced_pod(name=name, namespace=namespace)
+            while pod.status.phase != "Failed":
+                pod = client.read_namespaced_pod(name=name, namespace=namespace)
+        with self.assertRaises(AirflowException):
+            k.execute(context)
+        pod = client.read_namespaced_pod(name=name, namespace=namespace)
+        self.assertEqual(pod.metadata.labels["already_checked"], "True")
+        with mock.patch("airflow.contrib.operators.kubernetes_pod_operator.KubernetesPodOperator"
+                        ".create_new_pod_for_operator") as create_mock:
+            create_mock.return_value = ("success", {}, {})
+            k.execute(context)
+            create_mock.assert_called_once()
 
 # pylint: enable=unused-argument

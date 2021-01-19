@@ -14,7 +14,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 import json
 from tempfile import NamedTemporaryFile
 from tests.compat import mock
@@ -35,20 +34,35 @@ class MockRule(BaseRule):
         return MESSAGES
 
 
+class MockRuleToSkip(BaseRule):
+    title = "title"
+    description = "description"
+
+    def should_skip(self):
+        return "Yes, skipp this rule"
+
+
 class TestJSONFormatter:
-    @mock.patch("airflow.upgrade.checker.ALL_RULES", [MockRule()])
-    def test_output(self):
+    @mock.patch("airflow.upgrade.checker.ALL_RULES", [MockRule(), MockRuleToSkip()])
+    @mock.patch("airflow.upgrade.checker.logging.disable")  # mock to avoid side effects
+    def test_output(self, _):
         expected = [
             {
                 "rule": MockRule.__name__,
                 "title": MockRule.title,
                 "messages": MESSAGES,
+            },
+            {
+                "rule": MockRuleToSkip.__name__,
+                "title": MockRuleToSkip.title,
+                "messages": ["Yes, skipp this rule"],
             }
         ]
         parser = cli.CLIFactory.get_parser()
-        with NamedTemporaryFile("w+") as temp:
+        with NamedTemporaryFile("w+", suffix=".json") as temp:
             with pytest.raises(SystemExit):
-                cli.upgrade_check(parser.parse_args(['upgrade_check', '-s', temp.name]))
+                args = parser.parse_args(['upgrade_check', '-s', temp.name])
+                args.func(args)
             content = temp.read()
 
         assert json.loads(content) == expected

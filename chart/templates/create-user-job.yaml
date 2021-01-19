@@ -34,6 +34,7 @@ metadata:
 {{- end }}
   annotations:
     "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "2"
     "helm.sh/hook-delete-policy": hook-succeeded
 spec:
   template:
@@ -43,6 +44,8 @@ spec:
         component: create-user-job
         release: {{ .Release.Name }}
     spec:
+      securityContext:
+          runAsUser: {{ .Values.uid }}
       restartPolicy: OnFailure
       nodeSelector:
 {{ toYaml .Values.nodeSelector | indent 8 }}
@@ -50,6 +53,10 @@ spec:
 {{ toYaml .Values.affinity | indent 8 }}
       tolerations:
 {{ toYaml .Values.tolerations | indent 8 }}
+      {{- if or .Values.registry.secretName .Values.registry.connection }}
+      imagePullSecrets:
+        - name: {{ template "registry_secret" . }}
+      {{- end }}
       containers:
         - name: create-user
           image: {{ template "airflow_image" . }}
@@ -72,6 +79,8 @@ spec:
             - {{ .Values.webserver.defaultUser.lastName }}
             - "-p"
             - {{ .Values.webserver.defaultUser.password }}
+          envFrom:
+          {{- include "custom_airflow_environment_from" . | default "\n  []" | indent 10 }}
           env:
           {{- include "custom_airflow_environment" . | indent 10 }}
           {{- include "standard_airflow_environment" . | indent 10 }}

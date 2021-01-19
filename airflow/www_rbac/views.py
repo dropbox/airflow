@@ -31,7 +31,7 @@ from datetime import timedelta
 from urllib.parse import unquote
 
 import six
-from six.moves.urllib.parse import quote, urlparse
+from six.moves.urllib.parse import parse_qsl, quote, urlencode, urlparse
 
 import pendulum
 import sqlalchemy as sqla
@@ -95,7 +95,13 @@ def get_safe_url(url):
         valid_schemes = ['http', 'https', '']
         valid_netlocs = [request.host, '']
 
+        if not url:
+            return url_for('Airflow.index')
+
         parsed = urlparse(url)
+
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+        url = parsed._replace(query=urlencode(query)).geturl()
         if parsed.scheme in valid_schemes and parsed.netloc in valid_netlocs:
             return url
     except Exception as e:  # pylint: disable=broad-except
@@ -539,7 +545,9 @@ class Airflow(AirflowBaseView):
             return wwwutils.json_response({})
 
         query = session.query(
-            DagRun.dag_id, sqla.func.max(DagRun.execution_date).label('last_run')
+            DagRun.dag_id,
+            sqla.func.max(DagRun.execution_date).label('execution_date'),
+            sqla.func.max(DagRun.start_date).label('start_date'),
         ).group_by(DagRun.dag_id)
 
         # Filter to only ask for accessible and selected dags
@@ -548,7 +556,8 @@ class Airflow(AirflowBaseView):
         resp = {
             r.dag_id.replace('.', '__dot__'): {
                 'dag_id': r.dag_id,
-                'last_run': r.last_run.isoformat(),
+                'execution_date': r.execution_date.isoformat(),
+                'start_date': r.start_date.isoformat(),
             } for r in query
         }
         return wwwutils.json_response(resp)
@@ -969,7 +978,7 @@ class Airflow(AirflowBaseView):
             pass
 
         try:
-            from airflow.contrib.executors.kubernetes_executor import KubernetesExecutor
+            from airflow.executors.kubernetes_executor import KubernetesExecutor
             valid_kubernetes_config = isinstance(executor, KubernetesExecutor)
         except ImportError:
             pass
@@ -1997,42 +2006,38 @@ class Airflow(AirflowBaseView):
             .all()
         ) for ti in tis]))
 
-        # determine bars to show in the gantt chart
-        # all reschedules of one attempt are combinded into one bar
-        gantt_bar_items = []
-
         tasks = []
         for ti in tis:
-            end_date = ti.end_date or timezone.utcnow()
             # prev_attempted_tries will reflect the currently running try_number
             # or the try_number of the last complete run
             # https://issues.apache.org/jira/browse/AIRFLOW-2143
-            try_count = ti.prev_attempted_tries
-            gantt_bar_items.append((ti.task_id, ti.start_date, end_date, ti.state, try_count))
-            d = alchemy_to_dict(ti)
-            d['extraLinks'] = dag.get_task(ti.task_id).extra_links
-            tasks.append(d)
+            try_count = ti.prev_attempted_tries if ti.prev_attempted_tries != 0 else ti.try_number
+            task_dict = alchemy_to_dict(ti)
+            task_dict['end_date'] = task_dict['end_date'] or timezone.utcnow()
+            task_dict['extraLinks'] = dag.get_task(ti.task_id).extra_links
+            task_dict['try_number'] = try_count
+            tasks.append(task_dict)
 
         tf_count = 0
         try_count = 1
         prev_task_id = ""
-        for tf in ti_fails:
-            end_date = tf.end_date or timezone.utcnow()
-            start_date = tf.start_date or end_date
-            if tf_count != 0 and tf.task_id == prev_task_id:
-                try_count = try_count + 1
+        for failed_task_instance in ti_fails:
+            if tf_count != 0 and failed_task_instance.task_id == prev_task_id:
+                try_count += 1
             else:
                 try_count = 1
-            prev_task_id = tf.task_id
-            gantt_bar_items.append((tf.task_id, start_date, end_date, State.FAILED, try_count))
-            tf_count = tf_count + 1
-            task = dag.get_task(tf.task_id)
-            d = alchemy_to_dict(tf)
-            d['state'] = State.FAILED
-            d['operator'] = task.task_type
-            d['try_number'] = try_count
-            d['extraLinks'] = task.extra_links
-            tasks.append(d)
+            prev_task_id = failed_task_instance.task_id
+            tf_count += 1
+            task = dag.get_task(failed_task_instance.task_id)
+            task_dict = alchemy_to_dict(failed_task_instance)
+            end_date = task_dict['end_date'] or timezone.utcnow()
+            task_dict['end_date'] = end_date
+            task_dict['start_date'] = task_dict['start_date'] or end_date
+            task_dict['state'] = State.FAILED
+            task_dict['operator'] = task.task_type
+            task_dict['try_number'] = try_count
+            task_dict['extraLinks'] = task.extra_links
+            tasks.append(task_dict)
 
         data = {
             'taskNames': [ti.task_id for ti in tis],

@@ -23,6 +23,8 @@ import io
 import logging
 import os
 
+import kubernetes
+
 from airflow.configuration import conf
 from parameterized import parameterized
 from six import StringIO, PY2
@@ -52,8 +54,10 @@ from tests.test_utils.config import conf_vars
 if PY2:
     # Need `assertWarns` back-ported from unittest2
     import unittest2 as unittest
+    from backports import tempfile
 else:
     import unittest
+    import tempfile
 
 if PY2:
     @contextlib.contextmanager
@@ -137,6 +141,8 @@ def create_mock_args(
     args.ignore_dependencies = ignore_dependencies
     args.force = force
     args.interactive = interactive
+    # Needed for CLI deprecation warning decorator
+    args.subcommand = "fake-group"
     return args
 
 
@@ -288,6 +294,21 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(stdout[-1], expected_output[i])
 
             reset_dr_db(dag_id)
+
+    def test_generate_pod_template(self):
+
+        from airflow.kubernetes.pod_generator import PodGenerator
+        with tempfile.TemporaryDirectory("airflow_dry_run_test/") as directory:
+            d = directory
+            print(d)
+            cli.generate_pod_template(self.parser.parse_args(
+                ['generate_pod_template', '-o', directory]))
+            self.assertTrue(os.path.isdir(directory))
+            self.assertTrue(os.path.isfile(os.path.join(directory, 'airflow_template.yml')))
+
+            # ensure that a valid pod is created from YAML
+            result = PodGenerator.deserialize_model_file(os.path.join(directory, 'airflow_template.yml'))
+            self.assertIsNotNone(result)
 
     @mock.patch("airflow.bin.cli.DAG.run")
     def test_backfill(self, mock_run):
@@ -1007,3 +1028,123 @@ class TestCLIGetNumReadyWorkersRunning(unittest.TestCase):
 
         with mock.patch('psutil.Process', return_value=self.process):
             self.assertEqual(self.monitor._get_num_ready_workers_running(), 0)
+
+
+class TestCleanUpPodsCommand(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.parser = cli.get_parser()
+
+    @mock.patch('kubernetes.client.CoreV1Api.delete_namespaced_pod')
+    def test_delete_pod(self, delete_namespaced_pod):
+        cli._delete_pod('dummy', 'awesome-namespace')
+        delete_namespaced_pod.assert_called_with(body=mock.ANY, name='dummy', namespace='awesome-namespace')
+
+    @mock.patch('airflow.bin.cli._delete_pod')
+    @mock.patch('kubernetes.client.CoreV1Api.list_namespaced_pod')
+    @mock.patch('airflow.kubernetes.kube_client.config.load_incluster_config')
+    def test_running_pods_are_not_cleaned(self, load_incluster_config, list_namespaced_pod, delete_pod):
+        pod1 = MagicMock()
+        pod1.metadata.name = 'dummy'
+        pod1.status.phase = 'Running'
+        pod1.status.reason = None
+        pods = list_namespaced_pod()
+        pods.metadata._continue = None
+        pods.items = [pod1]
+        cli.cleanup_pods(
+            self.parser.parse_args(['kubernetes', 'cleanup-pods', '--namespace', 'awesome-namespace'])
+        )
+        delete_pod.assert_not_called()
+        load_incluster_config.assert_called_once_with()
+
+    @mock.patch('airflow.bin.cli._delete_pod')
+    @mock.patch('kubernetes.client.CoreV1Api.list_namespaced_pod')
+    @mock.patch('airflow.kubernetes.kube_client.config.load_incluster_config')
+    def test_cleanup_succeeded_pods(self, load_incluster_config, list_namespaced_pod, delete_pod):
+        pod1 = MagicMock()
+        pod1.metadata.name = 'dummy'
+        pod1.status.phase = 'Succeeded'
+        pod1.status.reason = None
+        pods = list_namespaced_pod()
+        pods.metadata._continue = None
+        pods.items = [pod1]
+        cli.cleanup_pods(
+            self.parser.parse_args(['kubernetes', 'cleanup-pods', '--namespace', 'awesome-namespace'])
+        )
+        delete_pod.assert_called_with('dummy', 'awesome-namespace')
+        load_incluster_config.assert_called_once_with()
+
+    @mock.patch('airflow.bin.cli._delete_pod')
+    @mock.patch('kubernetes.client.CoreV1Api.list_namespaced_pod')
+    @mock.patch('kubernetes.config.load_incluster_config')
+    def test_no_cleanup_failed_pods_wo_restart_policy_never(
+        self, load_incluster_config, list_namespaced_pod, delete_pod
+    ):
+        pod1 = MagicMock()
+        pod1.metadata.name = 'dummy2'
+        pod1.status.phase = 'Failed'
+        pod1.status.reason = None
+        pod1.spec.restart_policy = 'Always'
+        pods = list_namespaced_pod()
+        pods.metadata._continue = None
+        pods.items = [pod1]
+        cli.cleanup_pods(
+            self.parser.parse_args(['kubernetes', 'cleanup-pods', '--namespace', 'awesome-namespace'])
+        )
+        delete_pod.assert_not_called()
+        load_incluster_config.assert_called_once_with()
+
+    @mock.patch('airflow.bin.cli._delete_pod')
+    @mock.patch('kubernetes.client.CoreV1Api.list_namespaced_pod')
+    @mock.patch('kubernetes.config.load_incluster_config')
+    def test_cleanup_failed_pods_w_restart_policy_never(
+        self, load_incluster_config, list_namespaced_pod, delete_pod
+    ):
+        pod1 = MagicMock()
+        pod1.metadata.name = 'dummy3'
+        pod1.status.phase = 'Failed'
+        pod1.status.reason = None
+        pod1.spec.restart_policy = 'Never'
+        pods = list_namespaced_pod()
+        pods.metadata._continue = None
+        pods.items = [pod1]
+        cli.cleanup_pods(
+            self.parser.parse_args(['kubernetes', 'cleanup-pods', '--namespace', 'awesome-namespace'])
+        )
+        delete_pod.assert_called_with('dummy3', 'awesome-namespace')
+        load_incluster_config.assert_called_once_with()
+
+    @mock.patch('airflow.bin.cli._delete_pod')
+    @mock.patch('kubernetes.client.CoreV1Api.list_namespaced_pod')
+    @mock.patch('kubernetes.config.load_incluster_config')
+    def test_cleanup_evicted_pods(self, load_incluster_config, list_namespaced_pod, delete_pod):
+        pod1 = MagicMock()
+        pod1.metadata.name = 'dummy4'
+        pod1.status.phase = 'Failed'
+        pod1.status.reason = 'Evicted'
+        pod1.spec.restart_policy = 'Never'
+        pods = list_namespaced_pod()
+        pods.metadata._continue = None
+        pods.items = [pod1]
+        cli.cleanup_pods(
+            self.parser.parse_args(['kubernetes', 'cleanup-pods', '--namespace', 'awesome-namespace'])
+        )
+        delete_pod.assert_called_with('dummy4', 'awesome-namespace')
+        load_incluster_config.assert_called_once_with()
+
+    @mock.patch('airflow.bin.cli._delete_pod')
+    @mock.patch('kubernetes.client.CoreV1Api.list_namespaced_pod')
+    @mock.patch('kubernetes.config.load_incluster_config')
+    def test_cleanup_api_exception_continue(self, load_incluster_config, list_namespaced_pod, delete_pod):
+        delete_pod.side_effect = kubernetes.client.rest.ApiException(status=0)
+        pod1 = MagicMock()
+        pod1.metadata.name = 'dummy'
+        pod1.status.phase = 'Succeeded'
+        pod1.status.reason = None
+        pods = list_namespaced_pod()
+        pods.metadata._continue = None
+        pods.items = [pod1]
+        cli.cleanup_pods(
+            self.parser.parse_args(['kubernetes', 'cleanup-pods', '--namespace', 'awesome-namespace'])
+        )
+        load_incluster_config.assert_called_once_with()

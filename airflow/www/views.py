@@ -55,7 +55,7 @@ from past.builtins import basestring
 from pygments import highlight, lexers
 import six
 from pygments.formatters.html import HtmlFormatter
-from six.moves.urllib.parse import quote, unquote, urlparse
+from six.moves.urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse
 
 from sqlalchemy import or_, desc, and_, union_all
 from wtforms import (
@@ -335,7 +335,13 @@ def get_safe_url(url):
         valid_schemes = ['http', 'https', '']
         valid_netlocs = [request.host, '']
 
+        if not url:
+            return "/admin/"
+
         parsed = urlparse(url)
+
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+        url = parsed._replace(query=urlencode(query)).geturl()
         if parsed.scheme in valid_schemes and parsed.netloc in valid_netlocs:
             return url
     except Exception as e:  # pylint: disable=broad-except
@@ -465,8 +471,9 @@ class Airflow(AirflowViewMixin, BaseView):
             df = hook.get_pandas_df(
                 wwwutils.limit_sql(sql, CHART_LIMIT, conn_type=db.conn_type))
             df = df.fillna(0)
-        except Exception as e:
-            payload['error'] += "SQL execution failed. Details: " + str(e)
+        except Exception:
+            log.exception("Chart SQL execution failed")
+            payload['error'] += "SQL execution failed. Contact your System Administrator for more details"
 
         if csv:
             return Response(
@@ -1149,7 +1156,7 @@ class Airflow(AirflowViewMixin, BaseView):
             pass
 
         try:
-            from airflow.contrib.executors.kubernetes_executor import KubernetesExecutor
+            from airflow.executors.kubernetes_executor import KubernetesExecutor
             valid_kubernetes_config = isinstance(executor, KubernetesExecutor)
         except ImportError:
             pass
@@ -2392,8 +2399,9 @@ class QueryView(wwwutils.DataProfilingMixin, AirflowViewMixin, BaseView):
                     index=False,
                     na_rep='',
                 ) if has_data else ''
-            except Exception as e:
-                flash(str(e), 'error')
+            except Exception:
+                log.exception("Query SQL execution failed")
+                flash("SQL execution failed. Contact your System Administrator for more details", "error")
                 error = True
 
         if has_data and len(df) == QUERY_LIMIT:

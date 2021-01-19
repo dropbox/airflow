@@ -35,15 +35,15 @@ from airflow.utils.db import create_session
 from airflow.utils.net import get_hostname
 from airflow.utils.state import State
 from tests.compat import patch
-from tests.test_core import TEST_DAG_FOLDER
 from airflow.utils.timeout import timeout
+from tests.core.test_core import TEST_DAG_FOLDER
 from tests.test_utils.db import clear_db_runs
 from tests.test_utils.mock_executor import MockExecutor
 
 DEFAULT_DATE = timezone.datetime(2016, 1, 1)
 
 
-class LocalTaskJobTest(unittest.TestCase):
+class TestLocalTaskJob(unittest.TestCase):
     def setUp(self):
         clear_db_runs()
         patcher = patch('airflow.jobs.base_job.sleep')
@@ -165,7 +165,7 @@ class LocalTaskJobTest(unittest.TestCase):
                 delta = (time2 - time1).total_seconds()
                 self.assertAlmostEqual(delta, job.heartrate, delta=0.05)
 
-    @pytest.mark.xfail(condition=True, reason="This test might be flaky in postgres/mysql")
+    @pytest.mark.quarantined
     def test_mark_success_no_kill(self):
         """
         Test that ensures that mark_success in the UI doesn't cause
@@ -355,6 +355,7 @@ class LocalTaskJobTest(unittest.TestCase):
         process.join(timeout=10)
         self.assertFalse(process.is_alive())
 
+    @pytest.mark.xfail(condition=True, reason="This test is expected to fail randomly due to timing issues")
     def test_localtaskjob_maintain_heart_rate(self):
         dagbag = models.DagBag(
             dag_folder=TEST_DAG_FOLDER,

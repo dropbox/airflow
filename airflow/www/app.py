@@ -17,9 +17,13 @@
 # specific language governing permissions and limitations
 # under the License.
 #
+import datetime
 import logging
+import os
 from typing import Any
 
+import flask
+import flask_login
 import six
 from flask import Flask
 from flask_admin import Admin, base
@@ -46,6 +50,7 @@ log = logging.getLogger(__name__)
 
 
 def create_app(config=None, testing=False):
+
     app = Flask(__name__)
     if conf.getboolean('webserver', 'ENABLE_PROXY_FIX'):
         app.wsgi_app = ProxyFix(
@@ -56,9 +61,11 @@ def create_app(config=None, testing=False):
             x_port=conf.getint("webserver", "PROXY_FIX_X_PORT", fallback=1),
             x_prefix=conf.getint("webserver", "PROXY_FIX_X_PREFIX", fallback=1)
         )
-    app.secret_key = conf.get('webserver', 'SECRET_KEY')
+    app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(minutes=settings.get_session_lifetime_config())
     app.config['LOGIN_DISABLED'] = not conf.getboolean(
         'webserver', 'AUTHENTICATE')
+
+    app.secret_key = conf.get('webserver', 'SECRET_KEY')
 
     app.config['SESSION_COOKIE_HTTPONLY'] = True
     app.config['SESSION_COOKIE_SECURE'] = conf.getboolean('webserver', 'COOKIE_SECURE')
@@ -66,6 +73,9 @@ def create_app(config=None, testing=False):
 
     if config:
         app.config.from_mapping(config)
+
+    if 'SQLALCHEMY_ENGINE_OPTIONS' not in app.config:
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = settings.prepare_engine_args()
 
     csrf.init_app(app)
 
@@ -128,9 +138,9 @@ def create_app(config=None, testing=False):
             models.XCom, Session, name="XComs", category="Admin"))
 
         if "dev" in version.version:
-            airflow_doc_site = "https://airflow.readthedocs.io/en/latest"
+            airflow_doc_site = "https://s.apache.org/airflow-docs"
         else:
-            airflow_doc_site = 'https://airflow.apache.org/docs/{}'.format(version.version)
+            airflow_doc_site = 'https://airflow.apache.org/docs/apache-airflow/{}'.format(version.version)
 
         admin.add_link(base.MenuLink(
             name="Website",
