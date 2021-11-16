@@ -161,6 +161,7 @@ class AwsHook(BaseHook):
                 endpoint_url = extra_config.get('host')
 
             except AirflowException:
+                logging.exception("Could not establish aws credentials, falling back to boto3 strategy.")
                 # No connection found: fallback on boto3 credential strategy
                 # http://boto3.readthedocs.io/en/latest/guide/configuration.html
                 pass
