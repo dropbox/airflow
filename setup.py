@@ -432,7 +432,7 @@ devel = [
     'click==6.7',
     'contextdecorator;python_version<"3.4"',
     'coverage',
-    'docutils>=0.14, <0.16',
+    'docutils>=0.14, <=0.17',
     'ecdsa<0.15',  # Required for moto 1.3.14
     'flake8>=3.6.0',
     'flake8-colors',
@@ -688,7 +688,7 @@ def do_setup():
         setup_requires=[
             # Exclude bowler as it is incompatible with python 2.
             # 'bowler',
-            'docutils>=0.14, <0.16',
+            'docutils>=0.14, <=0.17',
             'gitpython>=2.0.2',
             'setuptools',
             'wheel',
