@@ -70,7 +70,7 @@
     "jquery": ">=3.4.0",
     "js-yaml": "^3.14.0",
     "lodash": "^4.17.20",
-    "moment-timezone": "^0.5.28",
+    "moment-timezone": "^0.5.35",
     "nvd3": "^1.8.6",
     "redoc": "^2.0.0-rc.30",
     "url-search-params-polyfill": "^8.1.0"
